@@ -38,7 +38,7 @@ export default function TopBar({ user, subtitle }: TopBarProps) {
           <div className="flex items-center gap-1.5 bg-yellow-400/10 border border-yellow-400/20 rounded-xl px-3 py-1.5">
             <Coins size={14} className="text-yellow-400" />
             <span className="text-sm font-bold text-yellow-400 tabular-nums">
-              {user.chips.toLocaleString()}
+              ₹{user.chips.toLocaleString()}
             </span>
           </div>
           <button

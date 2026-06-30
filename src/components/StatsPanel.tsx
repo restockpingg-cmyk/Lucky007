@@ -33,7 +33,7 @@ export default function StatsPanel({ stats, perspective }: StatsPanelProps) {
                 {isPositive ? "+" : ""}
                 {stats.profit.toLocaleString()}
               </span>
-              <span className="text-xs text-slate-500">chips</span>
+              <span className="text-xs text-slate-500">₹</span>
             </div>
           </div>
           <div

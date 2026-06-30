@@ -403,8 +403,9 @@ function BetList({ bets, emptyText }: { bets: Bet[]; emptyText: string }) {
                 pending: "bg-blue-500/20 text-blue-400 border-blue-500/30",
                 won: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
                 lost: "bg-red-500/20 text-red-400 border-red-500/30",
-              }[b.status])}>
-                {b.status}
+                void: "bg-slate-500/20 text-slate-400 border-slate-500/30",
+              }[b.status] ?? "bg-slate-500/20 text-slate-400 border-slate-500/30")}>
+                {b.status === "void" ? "Void" : b.status}
               </span>
             </div>
             {/* Full timestamp always visible */}
@@ -421,6 +422,7 @@ function BetList({ bets, emptyText }: { bets: Bet[]; emptyText: string }) {
               {b.status === "won" && <span className="text-emerald-400 font-bold">+₹{payout.toLocaleString()}</span>}
               {b.status === "lost" && <span className="text-red-400 font-bold">-₹{b.stake.toLocaleString()}</span>}
               {b.status === "pending" && <span className="text-slate-400">potential ₹{payout.toLocaleString()}</span>}
+              {b.status === "void" && <span className="text-slate-400 font-semibold">Stake returned</span>}
             </div>
           </div>
         );

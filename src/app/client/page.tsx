@@ -9,7 +9,7 @@ import MatchDetailSheet, { type BetSelection } from "@/components/MatchDetailShe
 import BottomNav, { type ClientView } from "@/components/BottomNav";
 import BackLayOdds from "@/components/BackLayOdds";
 import { useStore, useHydrated, placeBet, settleBet, statsForClient, autoSettleWeeklyBets, autoSettleForMatch, autoSettleOldBets, getPendingBetMatchIds, getNextMondayIST, isMondayIST } from "@/lib/store";
-import type { Bet } from "@/lib/store";
+import type { Bet, MatchResult } from "@/lib/store";
 import Loading from "@/components/Loading";
 import { sportLabels, primaryOdds, type Sport, type Match } from "@/lib/data";
 import { cn } from "@/lib/utils";
@@ -46,12 +46,21 @@ export default function ClientDashboard() {
   }, [hydrated]);
 
   // Auto-settle when a live match disappears from the feed (match ended)
-  const prevLiveIdsRef = useRef<Set<string> | null>(null);
+  const prevLiveIdsRef  = useRef<Set<string> | null>(null);
+  const lastMatchDataRef = useRef<Map<string, MatchResult>>(new Map());
   useEffect(() => {
     if (liveData.loading || liveData.isDemoData) return;
-    const currentLiveIds = new Set(
-      liveData.matches.filter((m) => m.status === "live").map((m) => m.id)
-    );
+    const liveMatches = liveData.matches.filter((m) => m.status === "live");
+    const currentLiveIds = new Set(liveMatches.map((m) => m.id));
+    // Keep last known score for every live match so we can use it at settlement
+    for (const m of liveMatches) {
+      lastMatchDataRef.current.set(m.id, {
+        homeTeam: m.homeTeam,
+        awayTeam: m.awayTeam,
+        homeScore: m.homeScore,
+        awayScore: m.awayScore,
+      });
+    }
     if (prevLiveIdsRef.current === null) {
       prevLiveIdsRef.current = currentLiveIds;
       return;
@@ -62,7 +71,10 @@ export default function ClientDashboard() {
     );
     if (finishedIds.length > 0) {
       let total = 0;
-      for (const matchId of finishedIds) total += autoSettleForMatch(matchId).count;
+      for (const matchId of finishedIds) {
+        const result = lastMatchDataRef.current.get(matchId);
+        total += autoSettleForMatch(matchId, result).count;
+      }
       if (total > 0) {
         setToast(`${total} bet${total !== 1 ? "s" : ""} settled — match ended`);
         setTimeout(() => setToast(""), 4000);
@@ -832,8 +844,9 @@ function BetCard({ bet, onCashOut }: { bet: Bet; onCashOut?: (betId: string) => 
           pending: "bg-blue-500/20 text-blue-400 border-blue-500/30",
           won: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
           lost: "bg-red-500/20 text-red-400 border-red-500/30",
-        }[bet.status])}>
-          {bet.status}
+          void: "bg-slate-500/20 text-slate-400 border-slate-500/30",
+        }[bet.status] ?? "bg-slate-500/20 text-slate-400 border-slate-500/30")}>
+          {bet.status === "void" ? "Void" : bet.status}
         </span>
       </div>
 
@@ -841,6 +854,7 @@ function BetCard({ bet, onCashOut }: { bet: Bet; onCashOut?: (betId: string) => 
         <span>Stake <span className="text-slate-300 font-semibold">{bet.stake.toLocaleString()}</span></span>
         {bet.status === "won" && <span className="text-emerald-400 font-bold">+{potentialPayout.toLocaleString()}</span>}
         {bet.status === "lost" && <span className="text-red-400 font-bold">-{bet.stake.toLocaleString()}</span>}
+        {bet.status === "void" && <span className="text-slate-400 font-semibold">Stake returned</span>}
         {isPending && (
           <span className="text-slate-500 flex items-center gap-1">
             <Clock size={11} /> {ageMin === 0 ? "just now" : `${ageMin}m ago`}

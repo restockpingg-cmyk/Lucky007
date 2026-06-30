@@ -52,9 +52,61 @@ export interface Bet {
   odds: number;
   stake: number;
   side: BetSide;
-  status: "pending" | "won" | "lost";
+  status: "pending" | "won" | "lost" | "void";
   placedAt: number;
   sport?: string;
+}
+
+// Minimal match state passed in at settlement time so we can resolve outcomes.
+export interface MatchResult {
+  homeTeam: string;
+  awayTeam: string;
+  homeScore?: number;
+  awayScore?: number;
+}
+
+// Try to resolve whether the selection won based on available score data.
+// Returns true/false if determinable, null if we should void the bet.
+function resolveSelection(market: string, pick: string, result: MatchResult): boolean | null {
+  const mkt = market.toLowerCase();
+  const p   = pick.toLowerCase();
+  const h   = result.homeTeam.toLowerCase();
+  const a   = result.awayTeam.toLowerCase();
+  // last word of team name as short key
+  const hk  = h.split(" ").pop()!;
+  const ak  = a.split(" ").pop()!;
+
+  if (result.homeScore === undefined || result.awayScore === undefined) return null;
+  const hs = result.homeScore;
+  const as_ = result.awayScore;
+
+  // Match Winner / Result
+  if (mkt.includes("winner") || mkt.includes("result") || mkt.includes("match odds")) {
+    const homeWins = hs > as_;
+    const awayWins = as_ > hs;
+    const draw     = hs === as_;
+    if (p.includes(hk) || p.includes(h) || p === "home" || p === "1") return homeWins;
+    if (p.includes(ak) || p.includes(a) || p === "away" || p === "2") return awayWins;
+    if (p.includes("draw") || p === "x" || p === "the draw")           return draw;
+  }
+
+  // Both Teams to Score (football)
+  if (mkt.includes("both teams") || mkt.includes("bts")) {
+    const bts = hs > 0 && as_ > 0;
+    if (p === "yes") return bts;
+    if (p === "no")  return !bts;
+  }
+
+  // Total Goals Over/Under (football)
+  if (mkt.includes("total goals") || mkt.includes("over/under")) {
+    const total = hs + as_;
+    const over  = p.match(/over\s*([\d.]+)/i);
+    const under = p.match(/under\s*([\d.]+)/i);
+    if (over)  return total > parseFloat(over[1]);
+    if (under) return total < parseFloat(under[1]);
+  }
+
+  return null; // fancy / unknown market — void
 }
 
 export interface CommissionChange {
@@ -660,18 +712,27 @@ export function getLoginEvents(userId: string): LoginEvent[] {
 }
 
 // Settle all pending bets for a specific match (called when a match ends / leaves the live feed).
-export function autoSettleForMatch(matchId: string): { count: number } {
+export function autoSettleForMatch(matchId: string, result?: MatchResult): { count: number } {
   const s = read();
   const pending = s.bets.filter((b) => b.matchId === matchId && b.status === "pending");
   if (pending.length === 0) return { count: 0 };
   for (const bet of pending) {
-    const won = bet.side === "lay"
-      ? Math.random() >= 1 / bet.odds
-      : Math.random() < 1 / bet.odds;
-    bet.status = won ? "won" : "lost";
-    if (won) {
-      const client = s.users.find((u) => u.id === bet.clientId);
-      if (client) client.chips += Math.round(bet.stake * bet.odds);
+    const client = s.users.find((u) => u.id === bet.clientId);
+    if (result) {
+      const selWon = resolveSelection(bet.market, bet.pick, result);
+      if (selWon === null) {
+        // Cannot determine from score — void: return stake, no profit
+        bet.status = "void";
+        if (client) client.chips += bet.stake;
+      } else {
+        const betWon = bet.side === "lay" ? !selWon : selWon;
+        bet.status = betWon ? "won" : "lost";
+        if (betWon && client) client.chips += Math.round(bet.stake * bet.odds);
+      }
+    } else {
+      // No result data — void all bets (return stake)
+      bet.status = "void";
+      if (client) client.chips += bet.stake;
     }
   }
   write(s);
@@ -696,14 +757,10 @@ export function autoSettleOldBets(): number {
   });
   if (toSettle.length === 0) return 0;
   for (const bet of toSettle) {
-    const won = bet.side === "lay"
-      ? Math.random() >= 1 / bet.odds
-      : Math.random() < 1 / bet.odds;
-    bet.status = won ? "won" : "lost";
-    if (won) {
-      const client = s.users.find((u) => u.id === bet.clientId);
-      if (client) client.chips += Math.round(bet.stake * bet.odds);
-    }
+    // Match result unknown — void: return stake, no win/loss
+    bet.status = "void";
+    const client = s.users.find((u) => u.id === bet.clientId);
+    if (client) client.chips += bet.stake;
   }
   write(s);
   return toSettle.length;
@@ -771,16 +828,12 @@ export function autoSettleWeeklyBets(clientId: string): Array<{ bet: Bet; won: b
 
   const results: Array<{ bet: Bet; won: boolean; payout: number }> = [];
   for (const bet of toSettle) {
-    const impliedProb = 1 / bet.odds;
-    const outcomeHappens = Math.random() < impliedProb;
-    const won = bet.side === "lay" ? !outcomeHappens : outcomeHappens;
-    bet.status = won ? "won" : "lost";
-    const payout = won ? Math.round(bet.stake * bet.odds) : 0;
-    if (won) {
-      const client = s.users.find((u) => u.id === bet.clientId);
-      if (client) client.chips += payout;
-    }
-    results.push({ bet, won, payout });
+    // Match result unknown at weekly settle — void: return stake
+    bet.status = "void";
+    const payout = bet.stake;
+    const client = s.users.find((u) => u.id === bet.clientId);
+    if (client) client.chips += payout;
+    results.push({ bet, won: false, payout });
   }
   write(s);
   return results;

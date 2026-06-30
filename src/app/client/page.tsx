@@ -137,7 +137,7 @@ export default function ClientDashboard() {
     setError("");
     const amt = parseInt(stake);
     if (!amt || amt <= 0) return setError("Enter a valid stake");
-    if (amt * picks.length > me!.chips) return setError("Not enough chips");
+    if (amt * picks.length > me!.chips) return setError("Insufficient balance");
     const queued = [...picks];
     const userId = me!.id;
     setPicks([]);
@@ -221,7 +221,7 @@ export default function ClientDashboard() {
             {settlementBanner.settled} bet{settlementBanner.settled > 1 ? "s" : ""} settled this week
           </p>
           <p className={cn("text-2xl font-black tabular-nums", settlementBanner.netChips >= 0 ? "text-emerald-400" : "text-red-400")}>
-            {settlementBanner.netChips >= 0 ? "+" : ""}{settlementBanner.netChips.toLocaleString()} chips
+            {settlementBanner.netChips >= 0 ? "+" : ""}₹{settlementBanner.netChips.toLocaleString()}
           </p>
           <button onClick={() => setSettlementBanner(null)} className="absolute top-3 right-3 text-slate-500 hover:text-slate-200">
             <X size={16} />
@@ -266,7 +266,7 @@ export default function ClientDashboard() {
 
             <div>
               <label className="block text-xs text-slate-400 mb-1.5 font-medium">
-                Stake per bet ({me.chips.toLocaleString()} chips available)
+                Stake per bet (₹{me.chips.toLocaleString()} available)
               </label>
               <input
                 type="number"
@@ -514,8 +514,8 @@ function AccountView({ stats, chips, username, name }: { stats: ReturnType<typeo
           <p className="text-xs text-slate-500 font-mono">@{username}</p>
         </div>
         <div className="text-right">
-          <p className="text-xl font-bold text-yellow-400 tabular-nums">{chips.toLocaleString()}</p>
-          <p className="text-[10px] text-slate-500 uppercase tracking-wider">chips</p>
+          <p className="text-xl font-bold text-yellow-400 tabular-nums">₹{chips.toLocaleString()}</p>
+          <p className="text-[10px] text-slate-500 uppercase tracking-wider">balance</p>
         </div>
       </div>
 

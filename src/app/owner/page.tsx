@@ -41,7 +41,7 @@ export default function OwnerDashboard() {
       <main className="max-w-5xl mx-auto px-4 py-4 space-y-5">
         {/* Top stat cards */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-          <Stat icon={<Coins size={16} />} label="Your chips" value={me.chips.toLocaleString()} color="yellow" />
+          <Stat icon={<Coins size={16} />} label="Balance" value={`₹${me.chips.toLocaleString()}`} color="yellow" />
           <Stat icon={<TrendingUp size={16} />} label="With admins" value={totalAdminChips.toLocaleString()} color="emerald" />
           <Stat icon={<Users size={16} />} label="With players" value={totalClientChips.toLocaleString()} color="blue" />
           <Stat icon={<BarChart3 size={16} />} label="Total in system" value={totalInSystem.toLocaleString()} color="purple" />

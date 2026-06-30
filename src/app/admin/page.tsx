@@ -91,7 +91,7 @@ export default function AdminDashboard() {
       <main className="max-w-5xl mx-auto px-4 py-4 space-y-4">
         {/* Compact stat strip */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          <Stat icon={<Coins size={14} />} label="Your chips" value={me.chips.toLocaleString()} color="yellow" />
+          <Stat icon={<Coins size={14} />} label="Balance" value={`₹${me.chips.toLocaleString()}`} color="yellow" />
           <Stat icon={<Coins size={14} />} label="With players" value={(totalClientChips + totalCobookieChips).toLocaleString()} color="purple" />
           <Stat icon={<Receipt size={14} />} label="Open bets" value={String(pendingBets.length)} color="blue" />
           <Stat
@@ -648,7 +648,7 @@ function PlayerGrid({ clients, bets, cobookies, onOpenPlayer, onEditCommission, 
                 <p className="text-xs text-slate-500 font-mono truncate">@{c.username}</p>
               </button>
               <div className="text-right shrink-0">
-                <p className="text-sm font-bold text-yellow-400 tabular-nums">{c.chips.toLocaleString()}</p>
+                <p className="text-sm font-bold text-yellow-400 tabular-nums">₹{c.chips.toLocaleString()}</p>
                 <button
                   onClick={(e) => { e.stopPropagation(); onEditCommission(c); }}
                   className="flex items-center gap-0.5 text-[9px] text-purple-400 bg-purple-500/10 border border-purple-500/20 px-1.5 py-0.5 rounded-full font-bold hover:bg-purple-500/20 transition-colors mt-0.5 max-w-[80px] truncate"
@@ -825,8 +825,8 @@ function CoBookiesTab({
                       <p className="text-xs text-slate-500 font-mono">@{cb.username}</p>
                     </div>
                     <div className="text-right shrink-0">
-                      <p className="text-sm font-bold text-yellow-400 tabular-nums">{cb.chips.toLocaleString()}</p>
-                      <p className="text-[10px] text-slate-500">chips</p>
+                      <p className="text-sm font-bold text-yellow-400 tabular-nums">₹{cb.chips.toLocaleString()}</p>
+                      <p className="text-[10px] text-slate-500">balance</p>
                     </div>
                     <button
                       onClick={() => { setDeleteTarget(cb); setDeleteError(""); }}
@@ -879,8 +879,8 @@ function CoBookiesTab({
                       <div className="flex-1">
                         <p className={cn("text-xs font-bold", adminGives ? "text-emerald-400" : "text-orange-400")}>
                           {adminGives
-                            ? `You owe ${cb.name}: ${commissionOwed.toLocaleString()} chips`
-                            : `${cb.name} owes you: ${Math.abs(commissionOwed).toLocaleString()} chips`}
+                            ? `You owe ${cb.name}: ₹${commissionOwed.toLocaleString()}`
+                            : `${cb.name} owes you: ₹${Math.abs(commissionOwed).toLocaleString()}`}
                         </p>
                         <p className="text-[10px] text-slate-500 mt-0.5">Based on settled bets this period</p>
                       </div>
@@ -901,13 +901,13 @@ function CoBookiesTab({
                       onClick={() => { setChipDialog({ cb, type: "give" }); setChipError(""); setChipAmount(""); }}
                       className="flex-1 flex items-center justify-center gap-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 text-xs font-semibold py-2 rounded-lg transition-colors"
                     >
-                      <ArrowUpRight size={13} /> Give chips
+                      <ArrowUpRight size={13} /> Add Balance
                     </button>
                     <button
                       onClick={() => { setChipDialog({ cb, type: "take" }); setChipError(""); setChipAmount(""); }}
                       className="flex-1 flex items-center justify-center gap-1 bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border border-orange-500/20 text-xs font-semibold py-2 rounded-lg transition-colors"
                     >
-                      <ArrowDownLeft size={13} /> Take chips
+                      <ArrowDownLeft size={13} /> Deduct
                     </button>
                     {allCommissionClients.length > 0 && (
                       <button
@@ -1009,13 +1009,13 @@ function CoBookiesTab({
           <div className="relative bg-[#0d1321] border border-white/10 rounded-2xl p-5 w-full max-w-xs shadow-2xl">
             <div className="flex items-center justify-between mb-3">
               <h4 className="font-bold text-slate-200">
-                {chipDialog.type === "give" ? `Give chips to ${chipDialog.cb.name}` : `Take chips from ${chipDialog.cb.name}`}
+                {chipDialog.type === "give" ? `Add Balance — ${chipDialog.cb.name}` : `Deduct from ${chipDialog.cb.name}`}
               </h4>
               <button onClick={() => setChipDialog(null)} className="text-slate-500 hover:text-slate-200"><X size={16} /></button>
             </div>
             <div className="bg-white/5 border border-white/10 rounded-xl p-2.5 text-xs mb-3 space-y-1">
-              <div className="flex justify-between"><span className="text-slate-400">Your balance</span><span className="font-bold text-yellow-400 tabular-nums">{admin.chips.toLocaleString()}</span></div>
-              <div className="flex justify-between"><span className="text-slate-400">{chipDialog.cb.name}&apos;s balance</span><span className="font-bold text-slate-300 tabular-nums">{chipDialog.cb.chips.toLocaleString()}</span></div>
+              <div className="flex justify-between"><span className="text-slate-400">Your balance</span><span className="font-bold text-yellow-400 tabular-nums">₹{admin.chips.toLocaleString()}</span></div>
+              <div className="flex justify-between"><span className="text-slate-400">{chipDialog.cb.name}&apos;s balance</span><span className="font-bold text-slate-300 tabular-nums">₹{chipDialog.cb.chips.toLocaleString()}</span></div>
             </div>
             <input
               type="number"
@@ -1035,7 +1035,7 @@ function CoBookiesTab({
               onClick={handleChipTransfer}
               className={cn("w-full font-bold py-2.5 rounded-xl transition-all active:scale-[0.98]", chipDialog.type === "give" ? "bg-emerald-500 hover:bg-emerald-400 text-white" : "bg-orange-500 hover:bg-orange-400 text-white")}
             >
-              {chipDialog.type === "give" ? "Give" : "Take"} {chipAmount || "0"} chips
+              {chipDialog.type === "give" ? "Add" : "Deduct"} ₹{chipAmount || "0"}
             </button>
           </div>
         </div>
@@ -1104,7 +1104,7 @@ function CoBookiesTab({
               Delete <span className="font-bold text-white">{deleteTarget.name}</span>?
             </p>
             <p className="text-xs text-slate-500 mb-1">
-              · Their <span className="text-yellow-400 font-semibold">{deleteTarget.chips.toLocaleString()} chips</span> will be returned to you.
+              · Their <span className="text-yellow-400 font-semibold">₹{deleteTarget.chips.toLocaleString()}</span> balance will be returned to you.
             </p>
             <p className="text-xs text-slate-500 mb-4">
               · All their players will be moved back to your direct list.

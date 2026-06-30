@@ -82,7 +82,7 @@ export default function CoBookieDashboard() {
 
         {/* Stat strip */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          <StatCard icon={<Coins size={14} />} label="Your chips" value={me.chips.toLocaleString()} color="yellow" />
+          <StatCard icon={<Coins size={14} />} label="Balance" value={`₹${me.chips.toLocaleString()}`} color="yellow" />
           <StatCard icon={<Percent size={14} />} label="Default comm." value={`${myCommissionRate}%`} color="purple" />
           <StatCard icon={<Receipt size={14} />} label="Open bets" value={String(pendingBets.length)} color="blue" />
           <StatCard
@@ -344,7 +344,7 @@ function PlayersTab({
                     <p className="text-xs text-slate-500 font-mono">@{c.username} · {clientBets.filter(b => b.status === "pending").length} active</p>
                   </div>
                   <div className="text-right shrink-0">
-                    <p className="text-sm font-bold text-yellow-400 tabular-nums">{c.chips.toLocaleString()}</p>
+                    <p className="text-sm font-bold text-yellow-400 tabular-nums">₹{c.chips.toLocaleString()}</p>
                     <p className="text-[10px] text-purple-400/80">{rate}% comm.</p>
                   </div>
                 </div>
@@ -359,13 +359,13 @@ function PlayersTab({
                     onClick={() => { setChipDialog({ client: c, type: "give" }); setChipError(""); setChipAmount(""); }}
                     className="flex-1 flex items-center justify-center gap-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 text-xs font-semibold py-1.5 rounded-lg transition-colors"
                   >
-                    <ArrowUpRight size={12} /> Give chips
+                    <ArrowUpRight size={12} /> Add Balance
                   </button>
                   <button
                     onClick={() => { setChipDialog({ client: c, type: "take" }); setChipError(""); setChipAmount(""); }}
                     className="flex-1 flex items-center justify-center gap-1 bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border border-orange-500/20 text-xs font-semibold py-1.5 rounded-lg transition-colors"
                   >
-                    <ArrowDownLeft size={12} /> Take chips
+                    <ArrowDownLeft size={12} /> Deduct
                   </button>
                 </div>
               </div>
@@ -438,13 +438,13 @@ function PlayersTab({
           <div className="relative bg-[#0d1321] border border-white/10 rounded-2xl p-5 w-full max-w-xs shadow-2xl">
             <div className="flex items-center justify-between mb-3">
               <h4 className="font-bold text-slate-200">
-                {chipDialog.type === "give" ? `Give chips to ${chipDialog.client.name}` : `Take chips from ${chipDialog.client.name}`}
+                {chipDialog.type === "give" ? `Add Balance — ${chipDialog.client.name}` : `Deduct from ${chipDialog.client.name}`}
               </h4>
               <button onClick={() => setChipDialog(null)} className="text-slate-500 hover:text-slate-200"><X size={16} /></button>
             </div>
             <div className="bg-white/5 border border-white/10 rounded-xl p-2.5 text-xs mb-3 space-y-1">
-              <div className="flex justify-between"><span className="text-slate-400">Your balance</span><span className="font-bold text-yellow-400 tabular-nums">{me.chips.toLocaleString()}</span></div>
-              <div className="flex justify-between"><span className="text-slate-400">{chipDialog.client.name}&apos;s balance</span><span className="font-bold text-slate-300 tabular-nums">{chipDialog.client.chips.toLocaleString()}</span></div>
+              <div className="flex justify-between"><span className="text-slate-400">Your balance</span><span className="font-bold text-yellow-400 tabular-nums">₹{me.chips.toLocaleString()}</span></div>
+              <div className="flex justify-between"><span className="text-slate-400">{chipDialog.client.name}&apos;s balance</span><span className="font-bold text-slate-300 tabular-nums">₹{chipDialog.client.chips.toLocaleString()}</span></div>
             </div>
             <input
               type="number"
@@ -465,7 +465,7 @@ function PlayersTab({
               onClick={handleChipTransfer}
               className={cn("w-full font-bold py-2.5 rounded-xl transition-all active:scale-[0.98]", chipDialog.type === "give" ? "bg-emerald-500 hover:bg-emerald-400 text-white" : "bg-orange-500 hover:bg-orange-400 text-white")}
             >
-              {chipDialog.type === "give" ? "Give" : "Take"} {chipAmount || "0"} chips
+              {chipDialog.type === "give" ? "Add" : "Deduct"} ₹{chipAmount || "0"}
             </button>
           </div>
         </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Check, Receipt, X, Trash2, Sparkles, Clock, RefreshCw, ChevronRight, Activity, CalendarClock } from "lucide-react";
 import TopBar from "@/components/TopBar";
@@ -8,7 +8,7 @@ import StatsPanel from "@/components/StatsPanel";
 import MatchDetailSheet, { type BetSelection } from "@/components/MatchDetailSheet";
 import BottomNav, { type ClientView } from "@/components/BottomNav";
 import BackLayOdds from "@/components/BackLayOdds";
-import { useStore, useHydrated, placeBet, settleBet, statsForClient, autoSettleWeeklyBets, getNextMondayIST, isMondayIST } from "@/lib/store";
+import { useStore, useHydrated, placeBet, settleBet, statsForClient, autoSettleWeeklyBets, autoSettleForMatch, autoSettleOldBets, getPendingBetMatchIds, getNextMondayIST, isMondayIST } from "@/lib/store";
 import type { Bet } from "@/lib/store";
 import Loading from "@/components/Loading";
 import { sportLabels, primaryOdds, type Sport, type Match } from "@/lib/data";
@@ -44,6 +44,48 @@ export default function ClientDashboard() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated]);
+
+  // Auto-settle when a live match disappears from the feed (match ended)
+  const prevLiveIdsRef = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    if (liveData.loading || liveData.isDemoData) return;
+    const currentLiveIds = new Set(
+      liveData.matches.filter((m) => m.status === "live").map((m) => m.id)
+    );
+    if (prevLiveIdsRef.current === null) {
+      prevLiveIdsRef.current = currentLiveIds;
+      return;
+    }
+    const pendingIds = getPendingBetMatchIds();
+    const finishedIds = [...prevLiveIdsRef.current].filter(
+      (id) => !currentLiveIds.has(id) && pendingIds.has(id)
+    );
+    if (finishedIds.length > 0) {
+      let total = 0;
+      for (const matchId of finishedIds) total += autoSettleForMatch(matchId).count;
+      if (total > 0) {
+        setToast(`${total} bet${total !== 1 ? "s" : ""} settled — match ended`);
+        setTimeout(() => setToast(""), 4000);
+      }
+    }
+    prevLiveIdsRef.current = currentLiveIds;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveData.matches, liveData.loading, liveData.isDemoData]);
+
+  // Fallback: time-based settlement for demo data or bets that outlive their sport's duration
+  useEffect(() => {
+    function check() {
+      const count = autoSettleOldBets();
+      if (count > 0) {
+        setToast(`${count} bet${count !== 1 ? "s" : ""} auto-settled`);
+        setTimeout(() => setToast(""), 4000);
+      }
+    }
+    check();
+    const i = setInterval(check, 5 * 60_000);
+    return () => clearInterval(i);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Countdown to next Monday
   useEffect(() => {
@@ -148,7 +190,7 @@ export default function ClientDashboard() {
     // Hidden 5s acceptance window
     setTimeout(() => {
       for (const p of queued) {
-        placeBet(userId, { id: p.matchId, label: p.match }, p.market, p.pick, p.odds, amt, p.side);
+        placeBet(userId, { id: p.matchId, label: p.match }, p.market, p.pick, p.odds, amt, p.side, p.sport);
       }
     }, 5000);
   }
@@ -641,6 +683,7 @@ function MatchRow({
       pick: label,
       odds: side === "lay" ? layOdds : value,
       side,
+      sport: match.sport,
     };
   }
 

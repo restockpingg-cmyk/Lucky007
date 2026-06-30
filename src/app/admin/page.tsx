@@ -12,7 +12,7 @@ import StatsPanel from "@/components/StatsPanel";
 import PlayerDetailSheet from "@/components/PlayerDetailSheet";
 import Loading from "@/components/Loading";
 import {
-  useStore, useHydrated, statsForClient,
+  useStore, useHydrated, statsForClient, autoSettleOldBets,
   createUser, allocateChips, reclaimChips, updateCommission, reassignPlayer, assignPlayerCommission, deleteCobookie,
   type User, type Stats, type CommissionChange,
 } from "@/lib/store";
@@ -31,6 +31,12 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     const i = setInterval(() => setNow((n) => n + 1), 30_000);
+    return () => clearInterval(i);
+  }, []);
+
+  useEffect(() => {
+    autoSettleOldBets();
+    const i = setInterval(autoSettleOldBets, 5 * 60_000);
     return () => clearInterval(i);
   }, []);
 

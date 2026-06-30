@@ -15,6 +15,7 @@ export interface BetSelection {
   pick: string;
   odds: number;
   side: "back" | "lay";
+  sport: string;
 }
 
 interface Props {
@@ -39,6 +40,7 @@ export default function MatchDetailSheet({ match, picks, onPick, onClose }: Prop
       pick: option.label,
       odds: side === "lay" ? layOdds : option.odds,
       side,
+      sport: match.sport,
     };
   }
 

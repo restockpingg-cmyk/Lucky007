@@ -54,6 +54,7 @@ export interface Bet {
   side: BetSide;
   status: "pending" | "won" | "lost";
   placedAt: number;
+  sport?: string;
 }
 
 export interface CommissionChange {
@@ -369,7 +370,8 @@ export function placeBet(
   pick: string,
   odds: number,
   stake: number,
-  side: BetSide = "back"
+  side: BetSide = "back",
+  sport?: string
 ): { ok: true; bet: Bet } | { ok: false; error: string } {
   if (stake <= 0) return { ok: false, error: "Stake must be positive" };
   const s = read();
@@ -389,6 +391,7 @@ export function placeBet(
     side,
     status: "pending",
     placedAt: Date.now(),
+    ...(sport ? { sport } : {}),
   };
   s.bets.push(bet);
   write(s);
@@ -654,6 +657,64 @@ export function getPlayerEvents(playerId: string): AccountEvent[] {
 export function getLoginEvents(userId: string): LoginEvent[] {
   const s = read();
   return (s.loginEvents ?? []).filter((e) => e.userId === userId).sort((a, b) => b.timestamp - a.timestamp);
+}
+
+// Settle all pending bets for a specific match (called when a match ends / leaves the live feed).
+export function autoSettleForMatch(matchId: string): { count: number } {
+  const s = read();
+  const pending = s.bets.filter((b) => b.matchId === matchId && b.status === "pending");
+  if (pending.length === 0) return { count: 0 };
+  for (const bet of pending) {
+    const won = bet.side === "lay"
+      ? Math.random() >= 1 / bet.odds
+      : Math.random() < 1 / bet.odds;
+    bet.status = won ? "won" : "lost";
+    if (won) {
+      const client = s.users.find((u) => u.id === bet.clientId);
+      if (client) client.chips += Math.round(bet.stake * bet.odds);
+    }
+  }
+  write(s);
+  return { count: pending.length };
+}
+
+// Settle pending bets that are older than their sport's typical match duration.
+// Used as a fallback when demo data is in use or the live feed doesn't signal match end.
+const SPORT_MAX_AGE_MS: Record<string, number> = {
+  football: 130 * 60_000,   // 2h 10m (90 min + halftime + buffer)
+  cricket:  480 * 60_000,   // 8h (covers T20 and ODI)
+  tennis:   240 * 60_000,   // 4h
+};
+
+export function autoSettleOldBets(): number {
+  const s = read();
+  const now = Date.now();
+  const toSettle = s.bets.filter((b) => {
+    if (b.status !== "pending") return false;
+    const maxAge = b.sport ? (SPORT_MAX_AGE_MS[b.sport] ?? 4 * 60 * 60_000) : 4 * 60 * 60_000;
+    return now - b.placedAt > maxAge;
+  });
+  if (toSettle.length === 0) return 0;
+  for (const bet of toSettle) {
+    const won = bet.side === "lay"
+      ? Math.random() >= 1 / bet.odds
+      : Math.random() < 1 / bet.odds;
+    bet.status = won ? "won" : "lost";
+    if (won) {
+      const client = s.users.find((u) => u.id === bet.clientId);
+      if (client) client.chips += Math.round(bet.stake * bet.odds);
+    }
+  }
+  write(s);
+  return toSettle.length;
+}
+
+// Returns the set of matchIds that have at least one pending bet.
+export function getPendingBetMatchIds(): Set<string> {
+  const s = read();
+  const ids = new Set<string>();
+  s.bets.filter((b) => b.status === "pending").forEach((b) => ids.add(b.matchId));
+  return ids;
 }
 
 export function resetAll() {

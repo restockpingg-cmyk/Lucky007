@@ -13,7 +13,7 @@ import PlayerDetailSheet from "@/components/PlayerDetailSheet";
 import Loading from "@/components/Loading";
 import {
   useStore, useHydrated, statsForClient,
-  createUser, allocateChips, reclaimChips, updateCommission,
+  createUser, allocateChips, reclaimChips, updateCommission, reassignPlayer,
   type User, type Stats, type CommissionChange,
 } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -240,6 +240,12 @@ function PlayersTab({
   const [editRate, setEditRate] = useState("");
   const [editError, setEditError] = useState("");
 
+  // Reassign player state
+  const [reassignTarget, setReassignTarget] = useState<User | null>(null);
+  const [reassignCB, setReassignCB] = useState("");
+  const [reassignComm, setReassignComm] = useState("");
+  const [reassignError, setReassignError] = useState("");
+
   const totalPlayers = directClients.length + cbClients.length;
 
   function handleCreate() {
@@ -286,7 +292,13 @@ function PlayersTab({
               <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
                 <Users size={11} /> Direct players ({directClients.length})
               </h3>
-              <PlayerGrid clients={directClients} bets={bets} onOpenPlayer={onOpenPlayer} onEditCommission={(u) => { setEditTarget(u); setEditRate(String(u.commission ?? "")); setEditError(""); }} />
+              <PlayerGrid
+                clients={directClients}
+                bets={bets}
+                onOpenPlayer={onOpenPlayer}
+                onEditCommission={(u) => { setEditTarget(u); setEditRate(String(u.commission ?? "")); setEditError(""); }}
+                onReassign={cobookies.length > 0 ? (u) => { setReassignTarget(u); setReassignCB(cobookies[0].id); setReassignComm(String(u.commission ?? "")); setReassignError(""); } : undefined}
+              />
             </section>
           )}
 
@@ -411,11 +423,82 @@ function PlayersTab({
           </div>
         </div>
       )}
+
+      {/* Reassign player to co-bookie modal */}
+      {reassignTarget && cobookies.length > 0 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setReassignTarget(null)} />
+          <div className="relative bg-[#0d1321] border border-white/10 rounded-2xl p-5 w-full max-w-xs shadow-2xl">
+            <div className="flex items-center justify-between mb-1">
+              <h4 className="font-bold text-slate-200">Move Player</h4>
+              <button onClick={() => setReassignTarget(null)} className="text-slate-500 hover:text-slate-200"><X size={16} /></button>
+            </div>
+            <p className="text-xs text-slate-500 mb-4">
+              <span className="text-slate-300 font-semibold">{reassignTarget.name}</span> will be moved from your direct list to the selected co-bookie.
+            </p>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5 font-medium">Assign to co-bookie</label>
+                <select
+                  value={reassignCB}
+                  onChange={(e) => setReassignCB(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-3 text-base text-slate-200 focus:outline-none focus:border-yellow-400/50 transition-colors"
+                >
+                  {cobookies.map((cb) => (
+                    <option key={cb.id} value={cb.id}>{cb.name} ({cb.commission ?? 0}% default)</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5 font-medium">
+                  Commission % <span className="text-slate-600">(leave blank to use co-bookie&apos;s default)</span>
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min="0"
+                    max="100"
+                    value={reassignComm}
+                    onChange={(e) => setReassignComm(e.target.value)}
+                    placeholder={`default: ${cobookies.find(cb => cb.id === reassignCB)?.commission ?? 0}%`}
+                    className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-3 text-base text-slate-200 placeholder-slate-600 focus:outline-none focus:border-yellow-400/50 transition-colors"
+                  />
+                  <span className="text-slate-400 font-bold text-lg">%</span>
+                </div>
+                <div className="flex gap-1.5 mt-2">
+                  {[5, 10, 15, 20, 25].map((v) => (
+                    <button key={v} onClick={() => setReassignComm(String(v))} className="flex-1 text-xs py-1.5 rounded-lg bg-white/5 hover:bg-purple-400/10 hover:text-purple-400 text-slate-400 transition-colors">{v}%</button>
+                  ))}
+                </div>
+              </div>
+
+              {reassignError && <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{reassignError}</p>}
+
+              <button
+                onClick={() => {
+                  setReassignError("");
+                  const commVal = reassignComm.trim() ? parseInt(reassignComm) : undefined;
+                  if (commVal !== undefined && (commVal < 0 || commVal > 100)) return setReassignError("Commission must be 0–100%");
+                  const res = reassignPlayer(reassignTarget.id, reassignCB, commVal, admin.id);
+                  if (!res.ok) return setReassignError(res.error);
+                  setReassignTarget(null);
+                }}
+                className="w-full bg-yellow-400 hover:bg-yellow-300 active:scale-[0.98] text-black font-bold py-2.5 rounded-xl transition-all"
+              >
+                Move to {cobookies.find(cb => cb.id === reassignCB)?.name ?? "Co-Bookie"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function PlayerGrid({ clients, bets, onOpenPlayer, onEditCommission }: { clients: User[]; bets: ReturnType<typeof useStore>["bets"]; onOpenPlayer: (p: User) => void; onEditCommission: (u: User) => void }) {
+function PlayerGrid({ clients, bets, onOpenPlayer, onEditCommission, onReassign }: { clients: User[]; bets: ReturnType<typeof useStore>["bets"]; onOpenPlayer: (p: User) => void; onEditCommission: (u: User) => void; onReassign?: (u: User) => void }) {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
       {clients.map((c) => {
@@ -440,7 +523,7 @@ function PlayerGrid({ clients, bets, onOpenPlayer, onEditCommission }: { clients
                 </button>
               </div>
             </div>
-            <button onClick={() => onOpenPlayer(c)} className="w-full flex items-center justify-between text-[11px]">
+            <button onClick={() => onOpenPlayer(c)} className="w-full flex items-center justify-between text-[11px] mb-2">
               <div className="flex items-center gap-2 text-slate-500">
                 <span>{s.totalBets} bets</span>
                 {s.pending > 0 && <span className="text-blue-400">{s.pending} live</span>}
@@ -449,6 +532,14 @@ function PlayerGrid({ clients, bets, onOpenPlayer, onEditCommission }: { clients
                 {s.profit >= 0 ? "+" : ""}{s.profit.toLocaleString()}
               </span>
             </button>
+            {onReassign && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onReassign(c); }}
+                className="w-full text-[11px] font-semibold text-slate-400 hover:text-yellow-400 bg-white/5 hover:bg-yellow-400/10 border border-white/5 hover:border-yellow-400/20 rounded-lg py-1.5 transition-colors flex items-center justify-center gap-1"
+              >
+                <ChevronRight size={11} /> Move to Co-Bookie
+              </button>
+            )}
           </div>
         );
       })}

@@ -178,6 +178,36 @@ export function deleteUser(userId: string) {
   write(s);
 }
 
+export function reassignPlayer(
+  playerId: string,
+  newParentId: string,
+  commission: number | undefined,
+  changedById: string
+): { ok: true } | { ok: false; error: string } {
+  const s = read();
+  const player = s.users.find((u) => u.id === playerId);
+  if (!player || player.role !== "client") return { ok: false, error: "Player not found" };
+  const newParent = s.users.find((u) => u.id === newParentId);
+  if (!newParent) return { ok: false, error: "Target not found" };
+  player.parentId = newParentId;
+  if (commission !== undefined) {
+    const oldRate = player.commission;
+    player.commission = commission;
+    s.commissionHistory.push({
+      id: `cc_${Math.random().toString(36).slice(2, 10)}`,
+      userId: playerId,
+      userName: player.name,
+      userRole: player.role,
+      fromRate: oldRate,
+      toRate: commission,
+      changedAt: Date.now(),
+      changedBy: changedById,
+    });
+  }
+  write(s);
+  return { ok: true };
+}
+
 export function allocateChips(
   fromUserId: string,
   toUserId: string,

@@ -2,12 +2,18 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Coins, Users, Receipt, BarChart3, History, Clock, TrendingUp, TrendingDown, Plus, ChevronRight, Activity, Percent } from "lucide-react";
+import {
+  Coins, Users, Receipt, BarChart3, History, Clock, TrendingUp, TrendingDown,
+  Plus, ChevronRight, Activity, Percent, ArrowUpRight, ArrowDownLeft, X, ChevronDown, ChevronUp,
+} from "lucide-react";
 import TopBar from "@/components/TopBar";
 import StatsPanel from "@/components/StatsPanel";
 import PlayerDetailSheet from "@/components/PlayerDetailSheet";
 import Loading from "@/components/Loading";
-import { useStore, useHydrated, statsForAdmin, statsForClient, createUser, type User } from "@/lib/store";
+import {
+  useStore, useHydrated, statsForAdmin, statsForClient,
+  createUser, allocateChips, reclaimChips, type User, type Stats,
+} from "@/lib/store";
 import { cn } from "@/lib/utils";
 
 type Tab = "overview" | "players" | "cobookies" | "live" | "history";
@@ -36,17 +42,39 @@ export default function AdminDashboard() {
   if (!me || me.role !== "admin") return <Loading />;
 
   const cobookies = store.users.filter((u) => u.role === "cobookie" && u.parentId === me.id);
-  const clients = store.users.filter((u) => u.role === "client" && u.parentId === me.id);
-  const clientIds = new Set(clients.map((c) => c.id));
+  const directClients = store.users.filter((u) => u.role === "client" && u.parentId === me.id);
+  const cbClients = store.users.filter((u) =>
+    u.role === "client" && cobookies.some((cb) => cb.id === u.parentId)
+  );
+  const allNetworkClients = [...directClients, ...cbClients];
+  const clientIds = new Set(allNetworkClients.map((c) => c.id));
   const allBets = store.bets.filter((b) => clientIds.has(b.clientId)).sort((a, b) => b.placedAt - a.placedAt);
   const pendingBets = allBets.filter((b) => b.status === "pending");
   const resolvedBets = allBets.filter((b) => b.status !== "pending");
-  const totalClientChips = clients.reduce((s, c) => s + c.chips, 0);
-  const stats = statsForAdmin(me.id, store.users, store.bets);
+  const totalClientChips = allNetworkClients.reduce((s, c) => s + c.chips, 0);
+  const totalCobookieChips = cobookies.reduce((s, cb) => s + cb.chips, 0);
+
+  // Network-wide stats (all clients including under co-bookies)
+  const nWon = resolvedBets.filter((b) => b.status === "won");
+  const nLost = resolvedBets.filter((b) => b.status === "lost");
+  const nStaked = resolvedBets.reduce((s, b) => s + b.stake, 0);
+  const nPayout = nWon.reduce((s, b) => s + Math.round(b.stake * b.odds), 0);
+  const networkStats: Stats = {
+    totalBets: allBets.length,
+    won: nWon.length,
+    lost: nLost.length,
+    pending: pendingBets.length,
+    totalStaked: nStaked,
+    totalPayout: nPayout,
+    profit: nStaked - nPayout,
+    winRate: resolvedBets.length ? (nLost.length / resolvedBets.length) * 100 : 0,
+    biggestWin: nLost.reduce((m, b) => Math.max(m, b.stake), 0),
+    biggestLoss: nWon.reduce((m, b) => Math.max(m, Math.round(b.stake * (b.odds - 1))), 0),
+  };
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode; badge?: number }[] = [
     { id: "overview", label: "Overview", icon: <BarChart3 size={14} /> },
-    { id: "players", label: "Players", icon: <Users size={14} />, badge: clients.length },
+    { id: "players", label: "Players", icon: <Users size={14} />, badge: allNetworkClients.length },
     { id: "cobookies", label: "Co-Bookies", icon: <Percent size={14} />, badge: cobookies.length },
     { id: "live", label: "Live", icon: <Activity size={14} />, badge: pendingBets.length },
     { id: "history", label: "History", icon: <History size={14} />, badge: resolvedBets.length },
@@ -56,16 +84,16 @@ export default function AdminDashboard() {
     <div className="min-h-screen pb-12">
       <TopBar user={me} />
       <main className="max-w-5xl mx-auto px-4 py-4 space-y-4">
-        {/* Compact stat strip — always visible */}
+        {/* Compact stat strip */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           <Stat icon={<Coins size={14} />} label="Your chips" value={me.chips.toLocaleString()} color="yellow" />
-          <Stat icon={<Coins size={14} />} label="With players" value={totalClientChips.toLocaleString()} color="purple" />
+          <Stat icon={<Coins size={14} />} label="With players" value={(totalClientChips + totalCobookieChips).toLocaleString()} color="purple" />
           <Stat icon={<Receipt size={14} />} label="Open bets" value={String(pendingBets.length)} color="blue" />
           <Stat
-            icon={stats.profit >= 0 ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
-            label="P&L"
-            value={`${stats.profit >= 0 ? "+" : ""}${stats.profit.toLocaleString()}`}
-            color={stats.profit >= 0 ? "emerald" : "red"}
+            icon={networkStats.profit >= 0 ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
+            label="Net P&L"
+            value={`${networkStats.profit >= 0 ? "+" : ""}${networkStats.profit.toLocaleString()}`}
+            color={networkStats.profit >= 0 ? "emerald" : "red"}
           />
         </div>
 
@@ -94,11 +122,24 @@ export default function AdminDashboard() {
         </div>
 
         {/* Tab content */}
-        {tab === "overview" && <OverviewTab stats={stats} clients={clients} bets={store.bets} onOpenPlayer={setOpenPlayer} />}
-        {tab === "players" && <PlayersTab clients={clients} bets={store.bets} owner={me} onOpenPlayer={setOpenPlayer} />}
-        {tab === "cobookies" && <CoBookiesTab cobookies={cobookies} bets={store.bets} allUsers={store.users} admin={me} />}
-        {tab === "live" && <LiveTab clients={clients} bets={pendingBets} onOpenPlayer={setOpenPlayer} />}
-        {tab === "history" && <HistoryTab clients={clients} bets={resolvedBets} />}
+        {tab === "overview" && (
+          <OverviewTab stats={networkStats} clients={allNetworkClients} bets={store.bets} onOpenPlayer={setOpenPlayer} />
+        )}
+        {tab === "players" && (
+          <PlayersTab
+            directClients={directClients}
+            cobookies={cobookies}
+            cbClients={cbClients}
+            bets={store.bets}
+            admin={me}
+            onOpenPlayer={setOpenPlayer}
+          />
+        )}
+        {tab === "cobookies" && (
+          <CoBookiesTab cobookies={cobookies} bets={store.bets} allUsers={store.users} admin={me} />
+        )}
+        {tab === "live" && <LiveTab clients={allNetworkClients} bets={pendingBets} onOpenPlayer={setOpenPlayer} />}
+        {tab === "history" && <HistoryTab clients={allNetworkClients} bets={resolvedBets} />}
       </main>
 
       {openPlayer && (
@@ -113,18 +154,19 @@ export default function AdminDashboard() {
   );
 }
 
+// ── Overview ──────────────────────────────────────────────────────────────────
+
 function OverviewTab({
   stats,
   clients,
   bets,
   onOpenPlayer,
 }: {
-  stats: ReturnType<typeof statsForAdmin>;
+  stats: Stats;
   clients: User[];
   bets: ReturnType<typeof useStore>["bets"];
   onOpenPlayer: (p: User) => void;
 }) {
-  // Top performers (most active players)
   const topByVolume = [...clients]
     .map((c) => ({ client: c, s: statsForClient(c.id, bets) }))
     .filter((x) => x.s.totalBets > 0)
@@ -134,7 +176,6 @@ function OverviewTab({
   return (
     <div className="space-y-4">
       <StatsPanel stats={stats} perspective="admin" />
-
       {topByVolume.length > 0 && (
         <section>
           <h3 className="font-bold text-slate-200 mb-2.5 flex items-center gap-2">
@@ -163,76 +204,95 @@ function OverviewTab({
   );
 }
 
+// ── Players ───────────────────────────────────────────────────────────────────
+
 function PlayersTab({
-  clients,
+  directClients,
+  cobookies,
+  cbClients,
   bets,
-  owner,
+  admin,
   onOpenPlayer,
 }: {
-  clients: User[];
+  directClients: User[];
+  cobookies: User[];
+  cbClients: User[];
   bets: ReturnType<typeof useStore>["bets"];
-  owner: User;
+  admin: User;
   onOpenPlayer: (p: User) => void;
 }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
   const [pin, setPin] = useState("");
+  const [commission, setCommission] = useState("");
+  const [assignTo, setAssignTo] = useState<string>(admin.id); // admin id or cobookie id
   const [createError, setCreateError] = useState("");
+
+  const totalPlayers = directClients.length + cbClients.length;
 
   function handleCreate() {
     setCreateError("");
     if (!name.trim() || !username.trim() || !pin.trim()) return setCreateError("All fields required");
     if (pin.length < 4) return setCreateError("PIN must be 4+ digits");
-    const res = createUser(owner.id, { name: name.trim(), username: username.trim(), pin: pin.trim(), role: "client" });
+    const commVal = commission.trim() ? parseInt(commission) : undefined;
+    if (commVal !== undefined && (commVal < 1 || commVal > 100)) return setCreateError("Commission must be 1–100%");
+    const res = createUser(assignTo, { name: name.trim(), username: username.trim(), pin: pin.trim(), role: "client", commission: commVal });
     if (!res.ok) return setCreateError(res.error);
-    setName(""); setUsername(""); setPin("");
+    setName(""); setUsername(""); setPin(""); setCommission(""); setAssignTo(admin.id);
     setCreateOpen(false);
   }
 
+  // Group cbClients by cobookie
+  const byCoBookieId = new Map<string, User[]>();
+  for (const cb of cobookies) byCoBookieId.set(cb.id, []);
+  for (const c of cbClients) {
+    if (c.parentId && byCoBookieId.has(c.parentId)) {
+      byCoBookieId.get(c.parentId)!.push(c);
+    }
+  }
+
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-slate-400">{clients.length} player{clients.length !== 1 ? "s" : ""}</p>
+        <p className="text-sm text-slate-400">{totalPlayers} player{totalPlayers !== 1 ? "s" : ""} total</p>
         <button onClick={() => setCreateOpen(true)} className="flex items-center gap-1 bg-yellow-400 hover:bg-yellow-300 text-black text-sm font-bold px-3 py-1.5 rounded-lg active:scale-95 transition-all">
           <Plus size={14} /> Add Player
         </button>
       </div>
 
-      {clients.length === 0 ? (
+      {totalPlayers === 0 ? (
         <div className="bg-[#111827] border border-white/5 rounded-2xl p-8 text-center">
           <Users size={28} className="text-slate-700 mx-auto mb-2" />
           <p className="text-slate-500 text-sm">No players yet</p>
           <p className="text-slate-600 text-xs mt-1">Tap &quot;Add Player&quot; to create one</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {clients.map((c) => {
-            const s = statsForClient(c.id, bets);
+        <div className="space-y-4">
+          {/* Direct players */}
+          {directClients.length > 0 && (
+            <section>
+              <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                <Users size={11} /> Direct players ({directClients.length})
+              </h3>
+              <PlayerGrid clients={directClients} bets={bets} onOpenPlayer={onOpenPlayer} />
+            </section>
+          )}
+
+          {/* Players under each co-bookie */}
+          {cobookies.map((cb) => {
+            const group = byCoBookieId.get(cb.id) ?? [];
             return (
-              <button key={c.id} onClick={() => onOpenPlayer(c)} className="bg-[#111827] border border-white/5 rounded-2xl p-3 hover:border-white/10 transition-colors text-left">
-                <div className="flex items-center gap-3 mb-2">
-                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-yellow-400/20 to-yellow-600/10 border border-yellow-400/20 flex items-center justify-center text-yellow-400 font-bold shrink-0">
-                    {c.name.charAt(0).toUpperCase()}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-slate-200 truncate">{c.name}</p>
-                    <p className="text-xs text-slate-500 font-mono truncate">@{c.username}</p>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <p className="text-sm font-bold text-yellow-400 tabular-nums">{c.chips.toLocaleString()}</p>
-                  </div>
-                </div>
-                <div className="flex items-center justify-between text-[11px]">
-                  <div className="flex items-center gap-2 text-slate-500">
-                    <span>{s.totalBets} bets</span>
-                    {s.pending > 0 && <span className="text-blue-400">{s.pending} live</span>}
-                  </div>
-                  <span className={cn("font-bold tabular-nums", s.profit >= 0 ? "text-emerald-400" : "text-red-400")}>
-                    {s.profit >= 0 ? "+" : ""}{s.profit.toLocaleString()}
-                  </span>
-                </div>
-              </button>
+              <section key={cb.id}>
+                <h3 className="text-xs font-bold text-purple-400/80 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                  <Percent size={11} /> Under {cb.name} ({group.length})
+                </h3>
+                {group.length === 0 ? (
+                  <p className="text-xs text-slate-600 pl-3">No players yet</p>
+                ) : (
+                  <PlayerGrid clients={group} bets={bets} onOpenPlayer={onOpenPlayer} />
+                )}
+              </section>
             );
           })}
         </div>
@@ -248,6 +308,42 @@ function PlayersTab({
               <Input label="Display name" value={name} onChange={setName} placeholder="John Doe" />
               <Input label="Username" value={username} onChange={setUsername} placeholder="johndoe" />
               <Input label="PIN" value={pin} onChange={setPin} placeholder="4+ digits" type="password" inputMode="numeric" />
+
+              {/* Assign to */}
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5 font-medium">Assign to</label>
+                <select
+                  value={assignTo}
+                  onChange={(e) => setAssignTo(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-3 text-base text-slate-200 focus:outline-none focus:border-yellow-400/50 transition-colors"
+                >
+                  <option value={admin.id}>Admin (Direct — me)</option>
+                  {cobookies.map((cb) => (
+                    <option key={cb.id} value={cb.id}>{cb.name} (Co-Bookie)</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Per-player commission */}
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5 font-medium">
+                  Commission % <span className="text-slate-600">(optional — overrides co-bookie rate)</span>
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min="1"
+                    max="100"
+                    value={commission}
+                    onChange={(e) => setCommission(e.target.value)}
+                    placeholder="e.g. 15"
+                    className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-3 text-base text-slate-200 placeholder-slate-600 focus:outline-none focus:border-yellow-400/50 transition-colors"
+                  />
+                  <span className="text-slate-400 font-bold text-lg">%</span>
+                </div>
+              </div>
+
               {createError && <p className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{createError}</p>}
               <button onClick={handleCreate} className="w-full bg-yellow-400 hover:bg-yellow-300 active:scale-[0.98] text-black font-bold py-3 rounded-xl transition-all">Create Player</button>
             </div>
@@ -258,6 +354,372 @@ function PlayersTab({
   );
 }
 
+function PlayerGrid({ clients, bets, onOpenPlayer }: { clients: User[]; bets: ReturnType<typeof useStore>["bets"]; onOpenPlayer: (p: User) => void }) {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+      {clients.map((c) => {
+        const s = statsForClient(c.id, bets);
+        return (
+          <button key={c.id} onClick={() => onOpenPlayer(c)} className="bg-[#111827] border border-white/5 rounded-2xl p-3 hover:border-white/10 transition-colors text-left">
+            <div className="flex items-center gap-3 mb-2">
+              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-yellow-400/20 to-yellow-600/10 border border-yellow-400/20 flex items-center justify-center text-yellow-400 font-bold shrink-0">
+                {c.name.charAt(0).toUpperCase()}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-slate-200 truncate">{c.name}</p>
+                <p className="text-xs text-slate-500 font-mono truncate">@{c.username}</p>
+              </div>
+              <div className="text-right shrink-0">
+                <p className="text-sm font-bold text-yellow-400 tabular-nums">{c.chips.toLocaleString()}</p>
+                {c.commission !== undefined && (
+                  <span className="text-[9px] text-purple-400 bg-purple-500/10 border border-purple-500/20 px-1.5 py-0.5 rounded-full font-bold">{c.commission}% comm</span>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center justify-between text-[11px]">
+              <div className="flex items-center gap-2 text-slate-500">
+                <span>{s.totalBets} bets</span>
+                {s.pending > 0 && <span className="text-blue-400">{s.pending} live</span>}
+              </div>
+              <span className={cn("font-bold tabular-nums", s.profit >= 0 ? "text-emerald-400" : "text-red-400")}>
+                {s.profit >= 0 ? "+" : ""}{s.profit.toLocaleString()}
+              </span>
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Co-Bookies ────────────────────────────────────────────────────────────────
+
+function CoBookiesTab({
+  cobookies,
+  bets,
+  allUsers,
+  admin,
+}: {
+  cobookies: User[];
+  bets: ReturnType<typeof useStore>["bets"];
+  allUsers: User[];
+  admin: User;
+}) {
+  const [createOpen, setCreateOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [username, setUsername] = useState("");
+  const [pin, setPin] = useState("");
+  const [commission, setCommission] = useState("10");
+  const [createError, setCreateError] = useState("");
+
+  // Chip dialog state
+  const [chipDialog, setChipDialog] = useState<{ cb: User; type: "give" | "take" } | null>(null);
+  const [chipAmount, setChipAmount] = useState("");
+  const [chipError, setChipError] = useState("");
+
+  // Expanded state per co-bookie
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  function toggleExpand(id: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function handleCreate() {
+    setCreateError("");
+    if (!name.trim() || !username.trim() || !pin.trim()) return setCreateError("All fields required");
+    if (pin.length < 4) return setCreateError("PIN must be 4+ digits");
+    const commVal = parseInt(commission);
+    if (!commVal || commVal < 1 || commVal > 100) return setCreateError("Commission must be 1–100%");
+    const res = createUser(admin.id, { name: name.trim(), username: username.trim(), pin: pin.trim(), role: "cobookie", commission: commVal });
+    if (!res.ok) return setCreateError(res.error);
+    setName(""); setUsername(""); setPin(""); setCommission("10");
+    setCreateOpen(false);
+  }
+
+  function handleChipTransfer() {
+    setChipError("");
+    if (!chipDialog) return;
+    const n = parseInt(chipAmount);
+    if (!n || n <= 0) return setChipError("Enter a valid amount");
+    const res = chipDialog.type === "give"
+      ? allocateChips(admin.id, chipDialog.cb.id, n)
+      : reclaimChips(chipDialog.cb.id, admin.id, n);
+    if (!res.ok) return setChipError(res.error);
+    setChipAmount("");
+    setChipDialog(null);
+  }
+
+  function handleSettle(cb: User, amount: number) {
+    if (amount <= 0) return;
+    const res = allocateChips(admin.id, cb.id, amount);
+    if (!res.ok) alert(res.error);
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-slate-400">{cobookies.length} co-book{cobookies.length !== 1 ? "ies" : "ie"}</p>
+        <button onClick={() => setCreateOpen(true)} className="flex items-center gap-1 bg-yellow-400 hover:bg-yellow-300 text-black text-sm font-bold px-3 py-1.5 rounded-lg active:scale-95 transition-all">
+          <Plus size={14} /> Add Co-Bookie
+        </button>
+      </div>
+
+      {cobookies.length === 0 ? (
+        <div className="bg-[#111827] border border-white/5 rounded-2xl p-8 text-center">
+          <Percent size={28} className="text-slate-700 mx-auto mb-2" />
+          <p className="text-slate-500 text-sm">No co-bookies yet</p>
+          <p className="text-slate-600 text-xs mt-1">Co-bookies manage their own players and earn a commission</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {cobookies.map((cb) => {
+            const cbClients = allUsers.filter((u) => u.role === "client" && u.parentId === cb.id);
+            const cbClientIds = new Set(cbClients.map((c) => c.id));
+            const cbBets = bets.filter((b) => cbClientIds.has(b.clientId));
+            const resolved = cbBets.filter((b) => b.status !== "pending");
+            const won = resolved.filter((b) => b.status === "won");
+            const totalStaked = resolved.reduce((s, b) => s + b.stake, 0);
+            const totalPayout = won.reduce((s, b) => s + Math.round(b.stake * b.odds), 0);
+            const houseProfit = totalStaked - totalPayout;
+
+            // Per-player commission: use player's own rate if set, else co-bookie rate
+            const commissionOwed = cbClients.reduce((sum, client) => {
+              const rate = client.commission ?? cb.commission ?? 0;
+              const clientResolved = cbBets.filter((b) => b.clientId === client.id && b.status !== "pending");
+              const clientWon = clientResolved.filter((b) => b.status === "won");
+              const clientStaked = clientResolved.reduce((s, b) => s + b.stake, 0);
+              const clientPayout = clientWon.reduce((s, b) => s + Math.round(b.stake * b.odds), 0);
+              const clientHouseProfit = clientStaked - clientPayout;
+              return sum + Math.round(clientHouseProfit * rate / 100);
+            }, 0);
+
+            const adminGives = commissionOwed > 0;  // admin owes co-bookie
+            const adminTakes = commissionOwed < 0;  // co-bookie owes admin
+            const isExpanded = expanded.has(cb.id);
+
+            return (
+              <div key={cb.id} className="bg-[#111827] border border-white/5 rounded-2xl overflow-hidden">
+                {/* Co-bookie header */}
+                <div className="p-4">
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-400/20 to-purple-600/10 border border-purple-400/20 flex items-center justify-center text-purple-400 font-bold shrink-0">
+                      {cb.name.charAt(0).toUpperCase()}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-slate-200 truncate">{cb.name}</p>
+                      <p className="text-xs text-slate-500 font-mono">@{cb.username}</p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-sm font-bold text-yellow-400 tabular-nums">{cb.chips.toLocaleString()}</p>
+                      <p className="text-[10px] text-slate-500">chips</p>
+                    </div>
+                  </div>
+
+                  {/* Commission badge and player count */}
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-xs font-bold text-purple-400 bg-purple-500/10 border border-purple-500/20 px-2 py-0.5 rounded-full">
+                      {cb.commission ?? 0}% commission
+                    </span>
+                    <span className="text-xs text-slate-500">{cbClients.length} player{cbClients.length !== 1 ? "s" : ""}</span>
+                    {cbBets.filter(b => b.status === "pending").length > 0 && (
+                      <span className="text-xs text-blue-400">{cbBets.filter(b => b.status === "pending").length} active bets</span>
+                    )}
+                  </div>
+
+                  {/* Stats row */}
+                  <div className="grid grid-cols-3 gap-2 text-center mb-3">
+                    <div className="bg-white/5 rounded-xl py-2">
+                      <p className="text-[10px] text-slate-500">House P&L</p>
+                      <p className={cn("font-bold tabular-nums text-sm", houseProfit >= 0 ? "text-emerald-400" : "text-red-400")}>
+                        {houseProfit >= 0 ? "+" : ""}{houseProfit.toLocaleString()}
+                      </p>
+                    </div>
+                    <div className="bg-white/5 rounded-xl py-2">
+                      <p className="text-[10px] text-slate-500">Commission</p>
+                      <p className={cn("font-bold tabular-nums text-sm", commissionOwed >= 0 ? "text-yellow-400" : "text-orange-400")}>
+                        {commissionOwed >= 0 ? "" : ""}{Math.abs(commissionOwed).toLocaleString()}
+                      </p>
+                    </div>
+                    <div className={cn("rounded-xl py-2 border", adminGives ? "bg-emerald-500/10 border-emerald-500/20" : adminTakes ? "bg-orange-500/10 border-orange-500/20" : "bg-white/5 border-transparent")}>
+                      <p className="text-[10px] text-slate-500">You</p>
+                      <p className={cn("font-bold text-sm", adminGives ? "text-emerald-400" : adminTakes ? "text-orange-400" : "text-slate-500")}>
+                        {adminGives ? "Give" : adminTakes ? "Take" : "Even"}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Settlement action */}
+                  {commissionOwed !== 0 && (
+                    <div className={cn("rounded-xl px-3 py-2.5 mb-3 flex items-center gap-2", adminGives ? "bg-emerald-500/10 border border-emerald-500/20" : "bg-orange-500/10 border border-orange-500/20")}>
+                      <div className="flex-1">
+                        <p className={cn("text-xs font-bold", adminGives ? "text-emerald-400" : "text-orange-400")}>
+                          {adminGives
+                            ? `You owe ${cb.name}: ${commissionOwed.toLocaleString()} chips`
+                            : `${cb.name} owes you: ${Math.abs(commissionOwed).toLocaleString()} chips`}
+                        </p>
+                        <p className="text-[10px] text-slate-500 mt-0.5">Based on settled bets this period</p>
+                      </div>
+                      {adminGives && (
+                        <button
+                          onClick={() => handleSettle(cb, commissionOwed)}
+                          className="text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-white px-3 py-1.5 rounded-lg transition-colors shrink-0"
+                        >
+                          Settle
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Chip give/take buttons */}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => { setChipDialog({ cb, type: "give" }); setChipError(""); setChipAmount(""); }}
+                      className="flex-1 flex items-center justify-center gap-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 text-xs font-semibold py-2 rounded-lg transition-colors"
+                    >
+                      <ArrowUpRight size={13} /> Give chips
+                    </button>
+                    <button
+                      onClick={() => { setChipDialog({ cb, type: "take" }); setChipError(""); setChipAmount(""); }}
+                      className="flex-1 flex items-center justify-center gap-1 bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border border-orange-500/20 text-xs font-semibold py-2 rounded-lg transition-colors"
+                    >
+                      <ArrowDownLeft size={13} /> Take chips
+                    </button>
+                    {cbClients.length > 0 && (
+                      <button
+                        onClick={() => toggleExpand(cb.id)}
+                        className="flex items-center gap-1 bg-white/5 hover:bg-white/10 text-slate-400 text-xs font-semibold px-3 py-2 rounded-lg transition-colors"
+                      >
+                        {isExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                        Players
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Expanded: per-player commission breakdown */}
+                {isExpanded && cbClients.length > 0 && (
+                  <div className="border-t border-white/5 bg-white/2">
+                    <p className="text-[10px] font-bold text-slate-600 uppercase tracking-wider px-4 pt-2.5 pb-1.5">Per-player commission breakdown</p>
+                    {cbClients.map((client) => {
+                      const rate = client.commission ?? cb.commission ?? 0;
+                      const clientResolved = bets.filter((b) => b.clientId === client.id && b.status !== "pending");
+                      const clientWon = clientResolved.filter((b) => b.status === "won");
+                      const cStaked = clientResolved.reduce((s, b) => s + b.stake, 0);
+                      const cPayout = clientWon.reduce((s, b) => s + Math.round(b.stake * b.odds), 0);
+                      const cHouseProfit = cStaked - cPayout;
+                      const cCut = Math.round(cHouseProfit * rate / 100);
+                      return (
+                        <div key={client.id} className="flex items-center gap-2 px-4 py-2 border-b border-white/5 last:border-0">
+                          <div className="w-7 h-7 rounded-full bg-gradient-to-br from-yellow-400/20 to-yellow-600/10 border border-yellow-400/20 flex items-center justify-center text-yellow-400 font-bold text-xs shrink-0">
+                            {client.name.charAt(0).toUpperCase()}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs text-slate-200 font-semibold truncate">{client.name}</p>
+                            <p className="text-[10px] text-slate-500">House P&L: <span className={cn(cHouseProfit >= 0 ? "text-emerald-400" : "text-red-400")}>{cHouseProfit >= 0 ? "+" : ""}{cHouseProfit.toLocaleString()}</span></p>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <p className="text-[10px] text-purple-400 font-bold">{rate}% rate</p>
+                            <p className={cn("text-xs font-bold tabular-nums", cCut >= 0 ? "text-yellow-400" : "text-orange-400")}>{cCut >= 0 ? "+" : ""}{cCut.toLocaleString()}</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <div className="flex items-center justify-between px-4 py-2 bg-white/3">
+                      <p className="text-[10px] font-bold text-slate-400">Total owed to {cb.name}</p>
+                      <p className={cn("text-sm font-black tabular-nums", commissionOwed >= 0 ? "text-emerald-400" : "text-orange-400")}>
+                        {commissionOwed >= 0 ? "+" : ""}{commissionOwed.toLocaleString()}
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Create co-bookie modal */}
+      {createOpen && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setCreateOpen(false)} />
+          <div className="relative w-full sm:max-w-sm bg-[#111827] border border-white/10 rounded-t-3xl sm:rounded-2xl p-5 shadow-2xl">
+            <h3 className="font-bold text-slate-200 mb-1">Add Co-Bookie</h3>
+            <p className="text-xs text-slate-500 mb-4">Co-bookies get their own login and manage their own players. You set their commission rate.</p>
+            <div className="space-y-3">
+              <Input label="Display name" value={name} onChange={setName} placeholder="Raju Bookie" />
+              <Input label="Username" value={username} onChange={setUsername} placeholder="rajubookie" />
+              <Input label="PIN" value={pin} onChange={setPin} placeholder="4+ digits" type="password" inputMode="numeric" />
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5 font-medium">Commission % (of house profit)</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min="1"
+                    max="100"
+                    value={commission}
+                    onChange={(e) => setCommission(e.target.value)}
+                    className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-3 text-base text-slate-200 focus:outline-none focus:border-yellow-400/50 transition-colors"
+                  />
+                  <span className="text-slate-400 font-bold text-lg">%</span>
+                </div>
+                <p className="text-[10px] text-slate-600 mt-1">They earn this % of the net profit from their players&apos; bets</p>
+              </div>
+              {createError && <p className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{createError}</p>}
+              <button onClick={handleCreate} className="w-full bg-yellow-400 hover:bg-yellow-300 active:scale-[0.98] text-black font-bold py-3 rounded-xl transition-all">Create Co-Bookie</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Chip give/take dialog */}
+      {chipDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setChipDialog(null)} />
+          <div className="relative bg-[#0d1321] border border-white/10 rounded-2xl p-5 w-full max-w-xs shadow-2xl">
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="font-bold text-slate-200">
+                {chipDialog.type === "give" ? `Give chips to ${chipDialog.cb.name}` : `Take chips from ${chipDialog.cb.name}`}
+              </h4>
+              <button onClick={() => setChipDialog(null)} className="text-slate-500 hover:text-slate-200"><X size={16} /></button>
+            </div>
+            <div className="bg-white/5 border border-white/10 rounded-xl p-2.5 text-xs mb-3 space-y-1">
+              <div className="flex justify-between"><span className="text-slate-400">Your balance</span><span className="font-bold text-yellow-400 tabular-nums">{admin.chips.toLocaleString()}</span></div>
+              <div className="flex justify-between"><span className="text-slate-400">{chipDialog.cb.name}&apos;s balance</span><span className="font-bold text-slate-300 tabular-nums">{chipDialog.cb.chips.toLocaleString()}</span></div>
+            </div>
+            <input
+              type="number"
+              inputMode="numeric"
+              value={chipAmount}
+              onChange={(e) => setChipAmount(e.target.value)}
+              placeholder="Amount"
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-3 text-base text-slate-200 focus:outline-none focus:border-yellow-400/50 mb-2"
+            />
+            <div className="flex gap-1.5 mb-2">
+              {[100, 500, 1000, 5000].map((v) => (
+                <button key={v} onClick={() => setChipAmount(String(v))} className="flex-1 text-xs py-2 rounded-lg bg-white/5 hover:bg-yellow-400/10 hover:text-yellow-400 text-slate-400 transition-colors">{v}</button>
+              ))}
+            </div>
+            {chipError && <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2 mb-2">{chipError}</p>}
+            <button
+              onClick={handleChipTransfer}
+              className={cn("w-full font-bold py-2.5 rounded-xl transition-all active:scale-[0.98]", chipDialog.type === "give" ? "bg-emerald-500 hover:bg-emerald-400 text-white" : "bg-orange-500 hover:bg-orange-400 text-white")}
+            >
+              {chipDialog.type === "give" ? "Give" : "Take"} {chipAmount || "0"} chips
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Live ──────────────────────────────────────────────────────────────────────
+
 function LiveTab({
   clients,
   bets,
@@ -267,7 +729,6 @@ function LiveTab({
   bets: ReturnType<typeof useStore>["bets"];
   onOpenPlayer: (p: User) => void;
 }) {
-  // Group bets by match
   const byMatch = new Map<string, typeof bets>();
   for (const b of bets) {
     const arr = byMatch.get(b.match) ?? [];
@@ -288,7 +749,6 @@ function LiveTab({
   return (
     <div className="space-y-4">
       <p className="text-xs text-slate-500">{bets.length} active bet{bets.length !== 1 ? "s" : ""} across {byMatch.size} match{byMatch.size !== 1 ? "es" : ""}</p>
-
       {Array.from(byMatch.entries()).map(([matchLabel, matchBets]) => {
         const totalExposure = matchBets.reduce((s, b) => s + Math.round(b.stake * (b.odds - 1)), 0);
         return (
@@ -331,6 +791,8 @@ function LiveTab({
   );
 }
 
+// ── History ───────────────────────────────────────────────────────────────────
+
 function HistoryTab({
   clients,
   bets,
@@ -372,145 +834,7 @@ function HistoryTab({
   );
 }
 
-function CoBookiesTab({
-  cobookies,
-  bets,
-  allUsers,
-  admin,
-}: {
-  cobookies: User[];
-  bets: ReturnType<typeof useStore>["bets"];
-  allUsers: User[];
-  admin: User;
-}) {
-  const [createOpen, setCreateOpen] = useState(false);
-  const [name, setName] = useState("");
-  const [username, setUsername] = useState("");
-  const [pin, setPin] = useState("");
-  const [commission, setCommission] = useState("10");
-  const [createError, setCreateError] = useState("");
-
-  function handleCreate() {
-    setCreateError("");
-    if (!name.trim() || !username.trim() || !pin.trim()) return setCreateError("All fields required");
-    if (pin.length < 4) return setCreateError("PIN must be 4+ digits");
-    const commVal = parseInt(commission);
-    if (!commVal || commVal < 1 || commVal > 100) return setCreateError("Commission must be 1–100%");
-    const res = createUser(admin.id, { name: name.trim(), username: username.trim(), pin: pin.trim(), role: "cobookie", commission: commVal });
-    if (!res.ok) return setCreateError(res.error);
-    setName(""); setUsername(""); setPin(""); setCommission("10");
-    setCreateOpen(false);
-  }
-
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-slate-400">{cobookies.length} co-book{cobookies.length !== 1 ? "ies" : "ie"}</p>
-        <button onClick={() => setCreateOpen(true)} className="flex items-center gap-1 bg-yellow-400 hover:bg-yellow-300 text-black text-sm font-bold px-3 py-1.5 rounded-lg active:scale-95 transition-all">
-          <Plus size={14} /> Add Co-Bookie
-        </button>
-      </div>
-
-      {cobookies.length === 0 ? (
-        <div className="bg-[#111827] border border-white/5 rounded-2xl p-8 text-center">
-          <Percent size={28} className="text-slate-700 mx-auto mb-2" />
-          <p className="text-slate-500 text-sm">No co-bookies yet</p>
-          <p className="text-slate-600 text-xs mt-1">Co-bookies manage their own players and earn a commission</p>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {cobookies.map((cb) => {
-            const cbClients = allUsers.filter((u) => u.role === "client" && u.parentId === cb.id);
-            const cbClientIds = new Set(cbClients.map((c) => c.id));
-            const cbBets = bets.filter((b) => cbClientIds.has(b.clientId));
-            const resolved = cbBets.filter((b) => b.status !== "pending");
-            const won = resolved.filter((b) => b.status === "won");
-            const lost = resolved.filter((b) => b.status === "lost");
-            const totalStaked = resolved.reduce((s, b) => s + b.stake, 0);
-            const totalPayout = won.reduce((s, b) => s + Math.round(b.stake * b.odds), 0);
-            const houseProfit = totalStaked - totalPayout;
-            const cbCommission = Math.round(houseProfit * (cb.commission ?? 0) / 100);
-            return (
-              <div key={cb.id} className="bg-[#111827] border border-white/5 rounded-2xl p-4">
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-400/20 to-purple-600/10 border border-purple-400/20 flex items-center justify-center text-purple-400 font-bold shrink-0">
-                    {cb.name.charAt(0).toUpperCase()}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-slate-200 truncate">{cb.name}</p>
-                    <p className="text-xs text-slate-500 font-mono truncate">@{cb.username}</p>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <span className="text-xs font-bold text-purple-400 bg-purple-500/10 border border-purple-500/20 px-2 py-0.5 rounded-full">
-                      {cb.commission ?? 0}% commission
-                    </span>
-                  </div>
-                </div>
-                <div className="grid grid-cols-3 gap-2 text-center">
-                  <div className="bg-white/5 rounded-xl py-2">
-                    <p className="text-xs text-slate-500">Players</p>
-                    <p className="font-bold text-slate-200">{cbClients.length}</p>
-                  </div>
-                  <div className="bg-white/5 rounded-xl py-2">
-                    <p className="text-xs text-slate-500">House P&L</p>
-                    <p className={cn("font-bold tabular-nums text-sm", houseProfit >= 0 ? "text-emerald-400" : "text-red-400")}>
-                      {houseProfit >= 0 ? "+" : ""}{houseProfit.toLocaleString()}
-                    </p>
-                  </div>
-                  <div className="bg-white/5 rounded-xl py-2">
-                    <p className="text-xs text-slate-500">Their Cut</p>
-                    <p className={cn("font-bold tabular-nums text-sm", cbCommission >= 0 ? "text-yellow-400" : "text-red-400")}>
-                      {cbCommission >= 0 ? "+" : ""}{cbCommission.toLocaleString()}
-                    </p>
-                  </div>
-                </div>
-                {won.length + lost.length > 0 && (
-                  <p className="text-[10px] text-slate-600 mt-2 text-center">
-                    {won.length}W / {lost.length}L · {cbBets.filter(b => b.status === "pending").length} pending
-                  </p>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Create modal */}
-      {createOpen && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
-          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setCreateOpen(false)} />
-          <div className="relative w-full sm:max-w-sm bg-[#111827] border border-white/10 rounded-t-3xl sm:rounded-2xl p-5 shadow-2xl">
-            <h3 className="font-bold text-slate-200 mb-1">Add Co-Bookie</h3>
-            <p className="text-xs text-slate-500 mb-4">Co-bookies get their own login and manage their own players. You set their commission rate.</p>
-            <div className="space-y-3">
-              <Input label="Display name" value={name} onChange={setName} placeholder="Raju Bookie" />
-              <Input label="Username" value={username} onChange={setUsername} placeholder="rajubookie" />
-              <Input label="PIN" value={pin} onChange={setPin} placeholder="4+ digits" type="password" inputMode="numeric" />
-              <div>
-                <label className="block text-xs text-slate-400 mb-1.5 font-medium">Commission % (of house profit)</label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    min="1"
-                    max="100"
-                    value={commission}
-                    onChange={(e) => setCommission(e.target.value)}
-                    className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-3 text-base text-slate-200 focus:outline-none focus:border-yellow-400/50 transition-colors"
-                  />
-                  <span className="text-slate-400 font-bold text-lg">%</span>
-                </div>
-                <p className="text-[10px] text-slate-600 mt-1">They earn this % of the net profit from their players&apos; bets</p>
-              </div>
-              {createError && <p className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{createError}</p>}
-              <button onClick={handleCreate} className="w-full bg-yellow-400 hover:bg-yellow-300 active:scale-[0.98] text-black font-bold py-3 rounded-xl transition-all">Create Co-Bookie</button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+// ── Shared UI ─────────────────────────────────────────────────────────────────
 
 function Stat({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: string; color: "yellow" | "emerald" | "blue" | "purple" | "red" }) {
   const colors = {

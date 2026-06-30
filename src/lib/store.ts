@@ -13,7 +13,8 @@ export interface User {
   chips: number;
   parentId: string | null;
   createdAt: number;
-  commission?: number; // co-bookie only: % of house profit they earn (0-100)
+  commission?: number;      // % of house profit that goes to the assigned co-bookie
+  commissionTo?: string;    // which co-bookie receives the commission on this player's P&L
 }
 
 export type BetSide = "back" | "lay";
@@ -39,6 +40,7 @@ export interface CommissionChange {
   userRole: Role;
   fromRate: number | undefined;
   toRate: number;
+  commissionToId?: string;  // co-bookie who receives this commission
   changedAt: number;
   changedBy: string;
 }
@@ -135,7 +137,7 @@ export function logout() {
 
 export function createUser(
   parentId: string,
-  data: { name: string; username: string; pin: string; role: Role; commission?: number }
+  data: { name: string; username: string; pin: string; role: Role; commission?: number; commissionTo?: string }
 ): { ok: true; user: User } | { ok: false; error: string } {
   const s = read();
   if (s.users.some((u) => u.username.toLowerCase() === data.username.toLowerCase())) {
@@ -151,6 +153,7 @@ export function createUser(
     parentId,
     createdAt: Date.now(),
     ...(data.commission !== undefined ? { commission: data.commission } : {}),
+    ...(data.commissionTo !== undefined ? { commissionTo: data.commissionTo } : {}),
   };
   s.users.push(user);
   write(s);
@@ -447,6 +450,40 @@ export function updateCommission(
     changedBy: changedById,
   };
   target.commission = newRate;
+  s.commissionHistory.push(change);
+  write(s);
+  return { ok: true };
+}
+
+// Assign commission from a specific player's P&L to a co-bookie.
+// commissionToId = null removes the commission assignment.
+export function assignPlayerCommission(
+  playerId: string,
+  rate: number,
+  commissionToId: string | null,
+  changedById: string
+): { ok: true } | { ok: false; error: string } {
+  if (rate < 0 || rate > 100) return { ok: false, error: "Rate must be 0–100%" };
+  const s = read();
+  const player = s.users.find((u) => u.id === playerId);
+  if (!player || player.role !== "client") return { ok: false, error: "Player not found" };
+  const change: CommissionChange = {
+    id: `cc_${Math.random().toString(36).slice(2, 10)}`,
+    userId: playerId,
+    userName: player.name,
+    userRole: player.role,
+    fromRate: player.commission,
+    toRate: rate,
+    commissionToId: commissionToId ?? undefined,
+    changedAt: Date.now(),
+    changedBy: changedById,
+  };
+  player.commission = rate;
+  if (commissionToId) {
+    player.commissionTo = commissionToId;
+  } else {
+    delete player.commissionTo;
+  }
   s.commissionHistory.push(change);
   write(s);
   return { ok: true };

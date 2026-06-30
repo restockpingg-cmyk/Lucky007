@@ -13,7 +13,7 @@ import PlayerDetailSheet from "@/components/PlayerDetailSheet";
 import Loading from "@/components/Loading";
 import {
   useStore, useHydrated, statsForClient,
-  createUser, allocateChips, reclaimChips, updateCommission, reassignPlayer,
+  createUser, allocateChips, reclaimChips, updateCommission, reassignPlayer, assignPlayerCommission,
   type User, type Stats, type CommissionChange,
 } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -135,6 +135,7 @@ export default function AdminDashboard() {
             directClients={directClients}
             cobookies={cobookies}
             cbClients={cbClients}
+            allUsers={store.users}
             bets={store.bets}
             admin={me}
             onOpenPlayer={setOpenPlayer}
@@ -216,6 +217,7 @@ function PlayersTab({
   directClients,
   cobookies,
   cbClients,
+  allUsers,
   bets,
   admin,
   onOpenPlayer,
@@ -223,6 +225,7 @@ function PlayersTab({
   directClients: User[];
   cobookies: User[];
   cbClients: User[];
+  allUsers: User[];
   bets: ReturnType<typeof useStore>["bets"];
   admin: User;
   onOpenPlayer: (p: User) => void;
@@ -233,11 +236,13 @@ function PlayersTab({
   const [pin, setPin] = useState("");
   const [commission, setCommission] = useState("");
   const [assignTo, setAssignTo] = useState<string>(admin.id);
+  const [commissionTo, setCommissionTo] = useState<string>("");
   const [createError, setCreateError] = useState("");
 
-  // Edit commission state
+  // Edit commission state (rate + which co-bookie)
   const [editTarget, setEditTarget] = useState<User | null>(null);
   const [editRate, setEditRate] = useState("");
+  const [editCBId, setEditCBId] = useState("");
   const [editError, setEditError] = useState("");
 
   // Reassign player state
@@ -254,9 +259,11 @@ function PlayersTab({
     if (pin.length < 4) return setCreateError("PIN must be 4+ digits");
     const commVal = commission.trim() ? parseInt(commission) : undefined;
     if (commVal !== undefined && (commVal < 1 || commVal > 100)) return setCreateError("Commission must be 1–100%");
-    const res = createUser(assignTo, { name: name.trim(), username: username.trim(), pin: pin.trim(), role: "client", commission: commVal });
+    // If assigning to a co-bookie, commissionTo = that co-bookie automatically
+    const cbTo = assignTo !== admin.id ? assignTo : (commissionTo || undefined);
+    const res = createUser(assignTo, { name: name.trim(), username: username.trim(), pin: pin.trim(), role: "client", commission: commVal, commissionTo: cbTo });
     if (!res.ok) return setCreateError(res.error);
-    setName(""); setUsername(""); setPin(""); setCommission(""); setAssignTo(admin.id);
+    setName(""); setUsername(""); setPin(""); setCommission(""); setAssignTo(admin.id); setCommissionTo("");
     setCreateOpen(false);
   }
 
@@ -267,6 +274,31 @@ function PlayersTab({
     if (c.parentId && byCoBookieId.has(c.parentId)) {
       byCoBookieId.get(c.parentId)!.push(c);
     }
+  }
+
+  // Direct admin players that also have commission assigned to a co-bookie
+  const directWithCB = directClients.filter((c) => c.commissionTo);
+  // Direct admin players with no commission assignment
+  const directNoCB = directClients.filter((c) => !c.commissionTo);
+
+  // Gather co-bookie players added by co-bookies themselves (parentId = cb.id, but cb.parentId = admin.id)
+  const cbOwnPlayers = allUsers.filter((u) =>
+    u.role === "client" && cobookies.some((cb) => cb.id === u.parentId) && !cbClients.some((c) => c.id === u.id)
+  );
+  // Merge with cbClients (cbClients already covers parentId-based)
+  const allCBPlayers = [...cbClients, ...cbOwnPlayers];
+  const allCBPlayerIds = new Set(allCBPlayers.map((u) => u.id));
+  for (const u of allCBPlayers) {
+    if (u.parentId && byCoBookieId.has(u.parentId) && !byCoBookieId.get(u.parentId)!.some((x) => x.id === u.id)) {
+      byCoBookieId.get(u.parentId)!.push(u);
+    }
+  }
+
+  function openEditCommission(u: User) {
+    setEditTarget(u);
+    setEditRate(String(u.commission ?? ""));
+    setEditCBId(u.commissionTo ?? (u.parentId && cobookies.some(cb => cb.id === u.parentId) ? u.parentId! : ""));
+    setEditError("");
   }
 
   return (
@@ -286,17 +318,35 @@ function PlayersTab({
         </div>
       ) : (
         <div className="space-y-4">
-          {/* Direct players */}
-          {directClients.length > 0 && (
+          {/* Direct players — no commission assigned */}
+          {directNoCB.length > 0 && (
             <section>
               <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                <Users size={11} /> Direct players ({directClients.length})
+                <Users size={11} /> Direct players ({directNoCB.length})
               </h3>
               <PlayerGrid
-                clients={directClients}
+                clients={directNoCB}
                 bets={bets}
+                cobookies={cobookies}
                 onOpenPlayer={onOpenPlayer}
-                onEditCommission={(u) => { setEditTarget(u); setEditRate(String(u.commission ?? "")); setEditError(""); }}
+                onEditCommission={openEditCommission}
+                onReassign={cobookies.length > 0 ? (u) => { setReassignTarget(u); setReassignCB(cobookies[0].id); setReassignComm(String(u.commission ?? "")); setReassignError(""); } : undefined}
+              />
+            </section>
+          )}
+
+          {/* Direct players with commission assigned to a co-bookie */}
+          {directWithCB.length > 0 && (
+            <section>
+              <h3 className="text-xs font-bold text-yellow-400/60 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                <Percent size={11} /> Direct players (commission assigned)
+              </h3>
+              <PlayerGrid
+                clients={directWithCB}
+                bets={bets}
+                cobookies={cobookies}
+                onOpenPlayer={onOpenPlayer}
+                onEditCommission={openEditCommission}
                 onReassign={cobookies.length > 0 ? (u) => { setReassignTarget(u); setReassignCB(cobookies[0].id); setReassignComm(String(u.commission ?? "")); setReassignError(""); } : undefined}
               />
             </section>
@@ -313,7 +363,7 @@ function PlayersTab({
                 {group.length === 0 ? (
                   <p className="text-xs text-slate-600 pl-3">No players yet</p>
                 ) : (
-                  <PlayerGrid clients={group} bets={bets} onOpenPlayer={onOpenPlayer} onEditCommission={(u) => { setEditTarget(u); setEditRate(String(u.commission ?? "")); setEditError(""); }} />
+                  <PlayerGrid clients={group} bets={bets} cobookies={cobookies} onOpenPlayer={onOpenPlayer} onEditCommission={openEditCommission} />
                 )}
               </section>
             );
@@ -332,40 +382,61 @@ function PlayersTab({
               <Input label="Username" value={username} onChange={setUsername} placeholder="johndoe" />
               <Input label="PIN" value={pin} onChange={setPin} placeholder="4+ digits" type="password" inputMode="numeric" />
 
-              {/* Assign to */}
+              {/* Assign to (who manages them / gives chips) */}
               <div>
-                <label className="block text-xs text-slate-400 mb-1.5 font-medium">Assign to</label>
+                <label className="block text-xs text-slate-400 mb-1.5 font-medium">Managed by</label>
                 <select
                   value={assignTo}
-                  onChange={(e) => setAssignTo(e.target.value)}
+                  onChange={(e) => { setAssignTo(e.target.value); setCommissionTo(""); }}
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-3 text-base text-slate-200 focus:outline-none focus:border-yellow-400/50 transition-colors"
                 >
-                  <option value={admin.id}>Admin (Direct — me)</option>
+                  <option value={admin.id}>Admin (me)</option>
                   {cobookies.map((cb) => (
                     <option key={cb.id} value={cb.id}>{cb.name} (Co-Bookie)</option>
                   ))}
                 </select>
               </div>
 
-              {/* Per-player commission */}
-              <div>
-                <label className="block text-xs text-slate-400 mb-1.5 font-medium">
-                  Commission % <span className="text-slate-600">(optional — overrides co-bookie rate)</span>
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    min="1"
-                    max="100"
-                    value={commission}
-                    onChange={(e) => setCommission(e.target.value)}
-                    placeholder="e.g. 15"
-                    className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-3 text-base text-slate-200 placeholder-slate-600 focus:outline-none focus:border-yellow-400/50 transition-colors"
-                  />
-                  <span className="text-slate-400 font-bold text-lg">%</span>
+              {/* Commission — only relevant when managed by admin */}
+              {assignTo === admin.id && cobookies.length > 0 && (
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1.5 font-medium">
+                    Commission goes to <span className="text-slate-600">(optional)</span>
+                  </label>
+                  <select
+                    value={commissionTo}
+                    onChange={(e) => setCommissionTo(e.target.value)}
+                    className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-3 text-base text-slate-200 focus:outline-none focus:border-yellow-400/50 transition-colors"
+                  >
+                    <option value="">None (admin keeps all)</option>
+                    {cobookies.map((cb) => (
+                      <option key={cb.id} value={cb.id}>{cb.name} ({cb.commission ?? 0}% default)</option>
+                    ))}
+                  </select>
                 </div>
-              </div>
+              )}
+
+              {/* Per-player commission rate */}
+              {(assignTo !== admin.id || commissionTo) && (
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1.5 font-medium">
+                    Commission % <span className="text-slate-600">(overrides co-bookie default)</span>
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      min="1"
+                      max="100"
+                      value={commission}
+                      onChange={(e) => setCommission(e.target.value)}
+                      placeholder={assignTo !== admin.id ? `default: ${cobookies.find(cb => cb.id === assignTo)?.commission ?? 0}%` : "e.g. 15"}
+                      className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-3 text-base text-slate-200 placeholder-slate-600 focus:outline-none focus:border-yellow-400/50 transition-colors"
+                    />
+                    <span className="text-slate-400 font-bold text-lg">%</span>
+                  </div>
+                </div>
+              )}
 
               {createError && <p className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{createError}</p>}
               <button onClick={handleCreate} className="w-full bg-yellow-400 hover:bg-yellow-300 active:scale-[0.98] text-black font-bold py-3 rounded-xl transition-all">Create Player</button>
@@ -380,10 +451,37 @@ function PlayersTab({
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setEditTarget(null)} />
           <div className="relative bg-[#0d1321] border border-white/10 rounded-2xl p-5 w-full max-w-xs shadow-2xl">
             <div className="flex items-center justify-between mb-1">
-              <h4 className="font-bold text-slate-200">Edit Commission</h4>
+              <h4 className="font-bold text-slate-200">Set Commission</h4>
               <button onClick={() => setEditTarget(null)} className="text-slate-500 hover:text-slate-200"><X size={16} /></button>
             </div>
             <p className="text-xs text-slate-500 mb-3">{editTarget.name} · @{editTarget.username}</p>
+
+            {/* Co-bookie selector — show only for direct admin players */}
+            {editTarget.parentId === admin.id && cobookies.length > 0 && (
+              <div className="mb-3">
+                <label className="block text-xs text-slate-400 mb-1.5 font-medium">Commission goes to</label>
+                <select
+                  value={editCBId}
+                  onChange={(e) => setEditCBId(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-purple-400/50 transition-colors"
+                >
+                  <option value="">None (admin keeps all)</option>
+                  {cobookies.map((cb) => (
+                    <option key={cb.id} value={cb.id}>{cb.name} ({cb.commission ?? 0}% default)</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Co-bookie players: show who earns the commission */}
+            {editTarget.parentId !== admin.id && (
+              <div className="mb-3 bg-purple-500/5 border border-purple-500/20 rounded-xl px-3 py-2">
+                <p className="text-[11px] text-purple-300">
+                  Commission goes to: <span className="font-bold">{cobookies.find(cb => cb.id === editTarget.parentId)?.name ?? cobookies.find(cb => cb.id === editTarget.commissionTo)?.name ?? "co-bookie"}</span>
+                </p>
+              </div>
+            )}
+
             <div className="flex items-center gap-2 mb-2">
               <input
                 type="number"
@@ -404,7 +502,10 @@ function PlayersTab({
               ))}
             </div>
             {editTarget.commission !== undefined && (
-              <p className="text-[10px] text-slate-500 mb-2">Current: <span className="text-purple-400 font-semibold">{editTarget.commission}%</span></p>
+              <p className="text-[10px] text-slate-500 mb-2">
+                Current: <span className="text-purple-400 font-semibold">{editTarget.commission}%</span>
+                {editTarget.commissionTo && <span className="ml-1">→ {cobookies.find(cb => cb.id === editTarget.commissionTo)?.name}</span>}
+              </p>
             )}
             {editError && <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2 mb-2">{editError}</p>}
             <button
@@ -412,8 +513,14 @@ function PlayersTab({
                 setEditError("");
                 const n = parseInt(editRate);
                 if (isNaN(n) || n < 0 || n > 100) return setEditError("Enter a rate between 0 and 100");
-                const res = updateCommission(editTarget.id, n, admin.id);
-                if (!res.ok) return setEditError(res.error);
+                // For direct admin players, use assignPlayerCommission (tracks commissionTo)
+                if (editTarget.parentId === admin.id) {
+                  const res = assignPlayerCommission(editTarget.id, n, editCBId || null, admin.id);
+                  if (!res.ok) return setEditError(res.error);
+                } else {
+                  const res = updateCommission(editTarget.id, n, admin.id);
+                  if (!res.ok) return setEditError(res.error);
+                }
                 setEditTarget(null);
               }}
               className="w-full bg-purple-500 hover:bg-purple-400 active:scale-[0.98] text-white font-bold py-2.5 rounded-xl transition-all"
@@ -498,11 +605,13 @@ function PlayersTab({
   );
 }
 
-function PlayerGrid({ clients, bets, onOpenPlayer, onEditCommission, onReassign }: { clients: User[]; bets: ReturnType<typeof useStore>["bets"]; onOpenPlayer: (p: User) => void; onEditCommission: (u: User) => void; onReassign?: (u: User) => void }) {
+function PlayerGrid({ clients, bets, cobookies, onOpenPlayer, onEditCommission, onReassign }: { clients: User[]; bets: ReturnType<typeof useStore>["bets"]; cobookies: User[]; onOpenPlayer: (p: User) => void; onEditCommission: (u: User) => void; onReassign?: (u: User) => void }) {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
       {clients.map((c) => {
         const s = statsForClient(c.id, bets);
+        const cbName = cobookies.find(cb => cb.id === (c.commissionTo ?? c.parentId))?.name;
+        const commLabel = c.commission !== undefined ? `${c.commission}%` : "Set %";
         return (
           <div key={c.id} className="bg-[#111827] border border-white/5 rounded-2xl p-3 hover:border-white/10 transition-colors">
             <div className="flex items-center gap-3 mb-2">
@@ -517,10 +626,14 @@ function PlayerGrid({ clients, bets, onOpenPlayer, onEditCommission, onReassign 
                 <p className="text-sm font-bold text-yellow-400 tabular-nums">{c.chips.toLocaleString()}</p>
                 <button
                   onClick={(e) => { e.stopPropagation(); onEditCommission(c); }}
-                  className="flex items-center gap-0.5 text-[9px] text-purple-400 bg-purple-500/10 border border-purple-500/20 px-1.5 py-0.5 rounded-full font-bold hover:bg-purple-500/20 transition-colors mt-0.5"
+                  className="flex items-center gap-0.5 text-[9px] text-purple-400 bg-purple-500/10 border border-purple-500/20 px-1.5 py-0.5 rounded-full font-bold hover:bg-purple-500/20 transition-colors mt-0.5 max-w-[80px] truncate"
+                  title={cbName ? `${commLabel} → ${cbName}` : commLabel}
                 >
-                  {c.commission !== undefined ? `${c.commission}%` : "Set %"} <Pencil size={8} />
+                  {commLabel} <Pencil size={8} />
                 </button>
+                {cbName && (
+                  <p className="text-[8px] text-purple-400/60 truncate max-w-[80px] mt-0.5">→ {cbName}</p>
+                )}
               </div>
             </div>
             <button onClick={() => onOpenPlayer(c)} className="w-full flex items-center justify-between text-[11px] mb-2">
@@ -637,19 +750,26 @@ function CoBookiesTab({
       ) : (
         <div className="space-y-3">
           {cobookies.map((cb) => {
-            const cbClients = allUsers.filter((u) => u.role === "client" && u.parentId === cb.id);
-            const cbClientIds = new Set(cbClients.map((c) => c.id));
-            const cbBets = bets.filter((b) => cbClientIds.has(b.clientId));
+            // Players managed by this co-bookie (parentId = cb.id)
+            const managedClients = allUsers.filter((u) => u.role === "client" && u.parentId === cb.id);
+            // Admin-direct players with commissionTo pointing to this co-bookie
+            const commissionOnlyClients = allUsers.filter((u) =>
+              u.role === "client" && u.parentId !== cb.id && u.commissionTo === cb.id
+            );
+            // For house P&L display: only managed clients' bets
+            const managedIds = new Set(managedClients.map((c) => c.id));
+            const cbBets = bets.filter((b) => managedIds.has(b.clientId));
             const resolved = cbBets.filter((b) => b.status !== "pending");
             const won = resolved.filter((b) => b.status === "won");
             const totalStaked = resolved.reduce((s, b) => s + b.stake, 0);
             const totalPayout = won.reduce((s, b) => s + Math.round(b.stake * b.odds), 0);
             const houseProfit = totalStaked - totalPayout;
 
-            // Per-player commission: use player's own rate if set, else co-bookie rate
-            const commissionOwed = cbClients.reduce((sum, client) => {
-              const rate = client.commission ?? cb.commission ?? 0;
-              const clientResolved = cbBets.filter((b) => b.clientId === client.id && b.status !== "pending");
+            // Commission calculation: managed clients + admin players assigned to this co-bookie
+            const allCommissionClients = [...managedClients, ...commissionOnlyClients];
+            const commissionOwed = allCommissionClients.reduce((sum, client) => {
+              const rate = client.commission ?? (client.parentId === cb.id ? cb.commission ?? 0 : 0);
+              const clientResolved = bets.filter((b) => b.clientId === client.id && b.status !== "pending");
               const clientWon = clientResolved.filter((b) => b.status === "won");
               const clientStaked = clientResolved.reduce((s, b) => s + b.stake, 0);
               const clientPayout = clientWon.reduce((s, b) => s + Math.round(b.stake * b.odds), 0);
@@ -687,7 +807,7 @@ function CoBookiesTab({
                     >
                       {cb.commission ?? 0}% commission <Pencil size={9} />
                     </button>
-                    <span className="text-xs text-slate-500">{cbClients.length} player{cbClients.length !== 1 ? "s" : ""}</span>
+                    <span className="text-xs text-slate-500">{managedClients.length} managed{commissionOnlyClients.length > 0 ? ` +${commissionOnlyClients.length} shared` : ""}</span>
                     {cbBets.filter(b => b.status === "pending").length > 0 && (
                       <span className="text-xs text-blue-400">{cbBets.filter(b => b.status === "pending").length} active bets</span>
                     )}
@@ -751,7 +871,7 @@ function CoBookiesTab({
                     >
                       <ArrowDownLeft size={13} /> Take chips
                     </button>
-                    {cbClients.length > 0 && (
+                    {allCommissionClients.length > 0 && (
                       <button
                         onClick={() => toggleExpand(cb.id)}
                         className="flex items-center gap-1 bg-white/5 hover:bg-white/10 text-slate-400 text-xs font-semibold px-3 py-2 rounded-lg transition-colors"
@@ -764,24 +884,28 @@ function CoBookiesTab({
                 </div>
 
                 {/* Expanded: per-player commission breakdown */}
-                {isExpanded && cbClients.length > 0 && (
+                {isExpanded && allCommissionClients.length > 0 && (
                   <div className="border-t border-white/5 bg-white/2">
                     <p className="text-[10px] font-bold text-slate-600 uppercase tracking-wider px-4 pt-2.5 pb-1.5">Per-player commission breakdown</p>
-                    {cbClients.map((client) => {
-                      const rate = client.commission ?? cb.commission ?? 0;
+                    {allCommissionClients.map((client) => {
+                      const rate = client.commission ?? (client.parentId === cb.id ? cb.commission ?? 0 : 0);
                       const clientResolved = bets.filter((b) => b.clientId === client.id && b.status !== "pending");
                       const clientWon = clientResolved.filter((b) => b.status === "won");
                       const cStaked = clientResolved.reduce((s, b) => s + b.stake, 0);
                       const cPayout = clientWon.reduce((s, b) => s + Math.round(b.stake * b.odds), 0);
                       const cHouseProfit = cStaked - cPayout;
                       const cCut = Math.round(cHouseProfit * rate / 100);
+                      const isAdminDirect = client.parentId !== cb.id;
                       return (
                         <div key={client.id} className="flex items-center gap-2 px-4 py-2 border-b border-white/5 last:border-0">
                           <div className="w-7 h-7 rounded-full bg-gradient-to-br from-yellow-400/20 to-yellow-600/10 border border-yellow-400/20 flex items-center justify-center text-yellow-400 font-bold text-xs shrink-0">
                             {client.name.charAt(0).toUpperCase()}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className="text-xs text-slate-200 font-semibold truncate">{client.name}</p>
+                            <div className="flex items-center gap-1">
+                              <p className="text-xs text-slate-200 font-semibold truncate">{client.name}</p>
+                              {isAdminDirect && <span className="text-[8px] text-yellow-400/60 bg-yellow-400/10 px-1 rounded font-bold shrink-0">Admin</span>}
+                            </div>
                             <p className="text-[10px] text-slate-500">House P&L: <span className={cn(cHouseProfit >= 0 ? "text-emerald-400" : "text-red-400")}>{cHouseProfit >= 0 ? "+" : ""}{cHouseProfit.toLocaleString()}</span></p>
                           </div>
                           <div className="text-right shrink-0">

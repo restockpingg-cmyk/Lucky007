@@ -333,15 +333,24 @@ function PlayersTab({
             const cPayout = cWon.reduce((s, b) => s + Math.round(b.stake * b.odds), 0);
             const cHouseProfit = cStaked - cPayout;
             const rate = c.commission ?? myCommissionRate;
+            const pendingCount = clientBets.filter(b => b.status === "pending").length;
+            const lastBetAt = clientBets.reduce((m, b) => Math.max(m, b.placedAt), 0);
+            const isActive = pendingCount > 0 || (lastBetAt > 0 && Date.now() - lastBetAt < 2 * 60 * 60 * 1000);
             return (
-              <div key={c.id} className="bg-[#111827] border border-white/5 rounded-2xl p-3">
+              <div key={c.id} className={cn("bg-[#111827] border rounded-2xl p-3", isActive ? "border-emerald-500/20" : "border-white/5")}>
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-yellow-400/20 to-yellow-600/10 border border-yellow-400/20 flex items-center justify-center text-yellow-400 font-bold shrink-0">
+                  <div className="relative w-10 h-10 rounded-full bg-gradient-to-br from-yellow-400/20 to-yellow-600/10 border border-yellow-400/20 flex items-center justify-center text-yellow-400 font-bold shrink-0">
                     {c.name.charAt(0).toUpperCase()}
+                    <span className={cn("absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-[#111827]", isActive ? "bg-emerald-400" : "bg-slate-600")} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-slate-200 truncate">{c.name}</p>
-                    <p className="text-xs text-slate-500 font-mono">@{c.username} · {clientBets.filter(b => b.status === "pending").length} active</p>
+                    <div className="flex items-center gap-1.5">
+                      <p className="font-semibold text-slate-200 truncate">{c.name}</p>
+                      <span className={cn("text-[9px] font-bold px-1.5 py-0.5 rounded-full border shrink-0", isActive ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" : "text-slate-600 bg-white/5 border-white/5")}>
+                        {isActive ? "Active" : "Inactive"}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 font-mono">@{c.username} · {pendingCount} active bets</p>
                   </div>
                   <div className="text-right shrink-0">
                     <p className="text-sm font-bold text-yellow-400 tabular-nums">₹{c.chips.toLocaleString()}</p>

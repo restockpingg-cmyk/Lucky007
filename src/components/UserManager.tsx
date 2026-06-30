@@ -125,17 +125,32 @@ export default function UserManager({
               childRole === "client"
                 ? statsForClient(c.id, bets)
                 : statsForAdmin(c.id, allUsers, bets);
+            const isActive = childRole === "client" && (
+              bets.some((b) => b.clientId === c.id && b.status === "pending") ||
+              (() => {
+                const last = bets.filter((b) => b.clientId === c.id).reduce((m, b) => Math.max(m, b.placedAt), 0);
+                return last > 0 && Date.now() - last < 2 * 60 * 60 * 1000;
+              })()
+            );
             return (
-            <div key={c.id} className="bg-[#111827] border border-white/5 rounded-2xl p-3.5">
+            <div key={c.id} className={`bg-[#111827] border rounded-2xl p-3.5 ${childRole === "client" && isActive ? "border-emerald-500/20" : "border-white/5"}`}>
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3 min-w-0 flex-1">
-                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-yellow-400/20 to-yellow-600/10 border border-yellow-400/20 flex items-center justify-center text-yellow-400 font-bold shrink-0">
+                  <div className="relative w-10 h-10 rounded-full bg-gradient-to-br from-yellow-400/20 to-yellow-600/10 border border-yellow-400/20 flex items-center justify-center text-yellow-400 font-bold shrink-0">
                     {c.name.charAt(0).toUpperCase()}
+                    {childRole === "client" && (
+                      <span className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-[#111827] ${isActive ? "bg-emerald-400" : "bg-slate-600"}`} />
+                    )}
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <p className="font-semibold text-slate-200 truncate">{c.name}</p>
                       <PnLBadge profit={childStats.profit} />
+                      {childRole === "client" && (
+                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border shrink-0 ${isActive ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" : "text-slate-600 bg-white/5 border-white/5"}`}>
+                          {isActive ? "Active" : "Inactive"}
+                        </span>
+                      )}
                     </div>
                     <p className="text-xs text-slate-500 font-mono truncate">@{c.username}</p>
                   </div>

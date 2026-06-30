@@ -30,9 +30,10 @@ export default function AdminDashboard() {
   const [, setNow] = useState(0);
 
   useEffect(() => {
-    const i = setInterval(() => setNow((n) => n + 1), 30_000);
+    const interval = tab === "live" ? 1500 : 30_000;
+    const i = setInterval(() => setNow((n) => n + 1), interval);
     return () => clearInterval(i);
-  }, []);
+  }, [tab]);
 
   useEffect(() => {
     autoSettleOldBets();
@@ -636,6 +637,15 @@ function PlayersTab({
   );
 }
 
+const ACTIVE_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 hours
+
+function isPlayerActive(clientId: string, bets: ReturnType<typeof useStore>["bets"]): boolean {
+  const clientBets = bets.filter((b) => b.clientId === clientId);
+  if (clientBets.some((b) => b.status === "pending")) return true;
+  const lastBet = clientBets.reduce((max, b) => Math.max(max, b.placedAt), 0);
+  return lastBet > 0 && Date.now() - lastBet < ACTIVE_WINDOW_MS;
+}
+
 function PlayerGrid({ clients, bets, cobookies, onOpenPlayer, onEditCommission, onReassign, reassignOptions }: { clients: User[]; bets: ReturnType<typeof useStore>["bets"]; cobookies: User[]; onOpenPlayer: (p: User) => void; onEditCommission: (u: User) => void; onReassign?: (u: User) => void; reassignOptions?: { id: string; label: string }[] }) {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -643,14 +653,21 @@ function PlayerGrid({ clients, bets, cobookies, onOpenPlayer, onEditCommission, 
         const s = statsForClient(c.id, bets);
         const cbName = cobookies.find(cb => cb.id === (c.commissionTo ?? c.parentId))?.name;
         const commLabel = c.commission !== undefined ? `${c.commission}%` : "Set %";
+        const active = isPlayerActive(c.id, bets);
         return (
-          <div key={c.id} className="bg-[#111827] border border-white/5 rounded-2xl p-3 hover:border-white/10 transition-colors">
+          <div key={c.id} className={cn("bg-[#111827] border rounded-2xl p-3 hover:border-white/10 transition-colors", active ? "border-emerald-500/20" : "border-white/5")}>
             <div className="flex items-center gap-3 mb-2">
-              <button onClick={() => onOpenPlayer(c)} className="w-10 h-10 rounded-full bg-gradient-to-br from-yellow-400/20 to-yellow-600/10 border border-yellow-400/20 flex items-center justify-center text-yellow-400 font-bold shrink-0">
+              <button onClick={() => onOpenPlayer(c)} className="relative w-10 h-10 rounded-full bg-gradient-to-br from-yellow-400/20 to-yellow-600/10 border border-yellow-400/20 flex items-center justify-center text-yellow-400 font-bold shrink-0">
                 {c.name.charAt(0).toUpperCase()}
+                <span className={cn("absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-[#111827]", active ? "bg-emerald-400" : "bg-slate-600")} />
               </button>
               <button onClick={() => onOpenPlayer(c)} className="flex-1 min-w-0 text-left">
-                <p className="font-semibold text-slate-200 truncate">{c.name}</p>
+                <div className="flex items-center gap-1.5">
+                  <p className="font-semibold text-slate-200 truncate">{c.name}</p>
+                  <span className={cn("text-[9px] font-bold px-1.5 py-0.5 rounded-full border shrink-0", active ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" : "text-slate-600 bg-white/5 border-white/5")}>
+                    {active ? "Active" : "Inactive"}
+                  </span>
+                </div>
                 <p className="text-xs text-slate-500 font-mono truncate">@{c.username}</p>
               </button>
               <div className="text-right shrink-0">

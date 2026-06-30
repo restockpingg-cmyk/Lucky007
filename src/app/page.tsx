@@ -31,7 +31,8 @@ export default function LoginPage() {
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
-    const user = login(username.trim(), pin.trim());
+    const ua = typeof navigator !== "undefined" ? navigator.userAgent : undefined;
+    const user = login(username.trim(), pin.trim(), ua);
     if (!user) {
       setError("Invalid username or PIN");
       return;

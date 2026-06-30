@@ -32,6 +32,14 @@ export interface AccountEvent {
   timestamp: number;
 }
 
+export interface LoginEvent {
+  id: string;
+  userId: string;
+  timestamp: number;
+  device: string;
+  browser: string;
+}
+
 export type BetSide = "back" | "lay";
 
 export interface Bet {
@@ -65,6 +73,7 @@ interface Store {
   bets: Bet[];
   commissionHistory: CommissionChange[];
   accountEvents: AccountEvent[];
+  loginEvents: LoginEvent[];
   currentUserId: string | null;
 }
 
@@ -81,7 +90,7 @@ function seed(): Store {
     parentId: null,
     createdAt: Date.now(),
   };
-  return { users: [owner], bets: [], commissionHistory: [], accountEvents: [], currentUserId: null };
+  return { users: [owner], bets: [], commissionHistory: [], accountEvents: [], loginEvents: [], currentUserId: null };
 }
 
 function read(): Store {
@@ -96,6 +105,7 @@ function read(): Store {
     const parsed = JSON.parse(raw) as Store;
     if (!parsed.commissionHistory) parsed.commissionHistory = [];
     if (!parsed.accountEvents) parsed.accountEvents = [];
+    if (!parsed.loginEvents) parsed.loginEvents = [];
     return parsed;
   } catch {
     return seed();
@@ -137,12 +147,49 @@ export function getStore(): Store {
   return read();
 }
 
-export function login(username: string, pin: string): User | null {
+function parseDevice(ua: string): string {
+  if (/iPhone/i.test(ua)) return "iPhone";
+  if (/iPad/i.test(ua)) return "iPad";
+  if (/Android/i.test(ua) && /Mobile/i.test(ua)) return "Android Phone";
+  if (/Android/i.test(ua)) return "Android Tablet";
+  if (/Windows/i.test(ua)) return "Windows PC";
+  if (/Macintosh|Mac OS X/i.test(ua)) return "Mac";
+  if (/Linux/i.test(ua)) return "Linux";
+  return "Unknown Device";
+}
+
+function parseBrowser(ua: string): string {
+  if (/Edg\//i.test(ua)) return "Edge";
+  if (/OPR|Opera/i.test(ua)) return "Opera";
+  if (/SamsungBrowser/i.test(ua)) return "Samsung Browser";
+  if (/Firefox/i.test(ua)) return "Firefox";
+  if (/Chrome/i.test(ua)) return "Chrome";
+  if (/Safari/i.test(ua)) return "Safari";
+  return "Browser";
+}
+
+export function login(username: string, pin: string, userAgent?: string): User | null {
   const s = read();
   const user = s.users.find((u) => u.username.toLowerCase() === username.toLowerCase() && u.pin === pin);
   if (!user) return null;
   s.currentUserId = user.id;
-  user.lastLoginAt = Date.now();
+  const now = Date.now();
+  user.lastLoginAt = now;
+  const device = userAgent ? parseDevice(userAgent) : "Unknown Device";
+  const browser = userAgent ? parseBrowser(userAgent) : "Browser";
+  s.loginEvents.push({
+    id: `le_${Math.random().toString(36).slice(2, 10)}`,
+    userId: user.id,
+    timestamp: now,
+    device,
+    browser,
+  });
+  // Keep only the last 50 login events per user
+  const userLogins = s.loginEvents.filter((e) => e.userId === user.id);
+  if (userLogins.length > 50) {
+    const cutIds = new Set(userLogins.slice(0, userLogins.length - 50).map((e) => e.id));
+    s.loginEvents = s.loginEvents.filter((e) => !cutIds.has(e.id));
+  }
   write(s);
   return user;
 }
@@ -602,6 +649,11 @@ export function deleteCobookie(
 export function getPlayerEvents(playerId: string): AccountEvent[] {
   const s = read();
   return (s.accountEvents ?? []).filter((e) => e.playerId === playerId).sort((a, b) => b.timestamp - a.timestamp);
+}
+
+export function getLoginEvents(userId: string): LoginEvent[] {
+  const s = read();
+  return (s.loginEvents ?? []).filter((e) => e.userId === userId).sort((a, b) => b.timestamp - a.timestamp);
 }
 
 export function resetAll() {

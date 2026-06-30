@@ -4,13 +4,13 @@ import { useState, useEffect } from "react";
 import {
   X, ArrowUpRight, ArrowDownLeft, Trash2, Clock, Receipt,
   UserCheck, History, Activity, Wallet, CalendarDays, LogIn,
-  ArrowRightLeft, Plus, Minus,
+  ArrowRightLeft, Plus, Minus, Smartphone, Monitor,
 } from "lucide-react";
 import StatsPanel from "./StatsPanel";
 import { cn } from "@/lib/utils";
 import {
-  allocateChips, reclaimChips, deleteUser, statsForClient, getPlayerEvents,
-  type Bet, type User, type AccountEvent,
+  allocateChips, reclaimChips, deleteUser, statsForClient, getPlayerEvents, getLoginEvents,
+  type Bet, type User, type AccountEvent, type LoginEvent,
 } from "@/lib/store";
 
 interface Props {
@@ -28,10 +28,15 @@ export default function PlayerDetailSheet({ player, bets, currentUser, onClose }
   const [amount, setAmount] = useState("");
   const [allocError, setAllocError] = useState("");
   const [events, setEvents] = useState<AccountEvent[]>([]);
+  const [loginEvents, setLoginEvents] = useState<LoginEvent[]>([]);
 
   useEffect(() => {
     setEvents(getPlayerEvents(player.id));
-    const handler = () => setEvents(getPlayerEvents(player.id));
+    setLoginEvents(getLoginEvents(player.id));
+    const handler = () => {
+      setEvents(getPlayerEvents(player.id));
+      setLoginEvents(getLoginEvents(player.id));
+    };
     window.addEventListener("lucky007_store_change", handler);
     return () => window.removeEventListener("lucky007_store_change", handler);
   }, [player.id]);
@@ -55,7 +60,7 @@ export default function PlayerDetailSheet({ player, bets, currentUser, onClose }
   }
 
   function handleDelete() {
-    if (confirm(`Delete ${player.name}? Their ${player.chips} chips will be returned to you.`)) {
+    if (confirm(`Delete ${player.name}? Their ₹${player.chips.toLocaleString()} balance will be returned to you.`)) {
       deleteUser(player.id);
       onClose();
     }
@@ -84,8 +89,8 @@ export default function PlayerDetailSheet({ player, bets, currentUser, onClose }
               <p className="text-xs text-slate-500 font-mono">@{player.username}</p>
             </div>
             <div className="text-right shrink-0">
-              <p className="text-xl font-bold text-yellow-400 tabular-nums">{player.chips.toLocaleString()}</p>
-              <p className="text-[10px] text-slate-500 uppercase tracking-wider">chips</p>
+              <p className="text-xl font-bold text-yellow-400 tabular-nums">₹{player.chips.toLocaleString()}</p>
+              <p className="text-[10px] text-slate-500 uppercase tracking-wider">balance</p>
             </div>
             <button onClick={onClose} className="text-slate-500 hover:text-slate-200 p-1 rounded-lg hover:bg-white/5 shrink-0 self-start">
               <X size={18} />
@@ -98,13 +103,13 @@ export default function PlayerDetailSheet({ player, bets, currentUser, onClose }
               onClick={() => { setAllocOpen("give"); setAllocError(""); setAmount(""); }}
               className="flex-1 flex items-center justify-center gap-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 text-xs font-semibold py-2 rounded-lg transition-colors"
             >
-              <ArrowUpRight size={13} /> Give chips
+              <ArrowUpRight size={13} /> Add Balance
             </button>
             <button
               onClick={() => { setAllocOpen("take"); setAllocError(""); setAmount(""); }}
               className="flex-1 flex items-center justify-center gap-1 bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border border-orange-500/20 text-xs font-semibold py-2 rounded-lg transition-colors"
             >
-              <ArrowDownLeft size={13} /> Take chips
+              <ArrowDownLeft size={13} /> Deduct
             </button>
             <button
               onClick={handleDelete}
@@ -142,7 +147,7 @@ export default function PlayerDetailSheet({ player, bets, currentUser, onClose }
 
         {/* Tab content */}
         <div className="p-4 space-y-4">
-          {tab === "info" && <InfoTab player={player} stats={stats} bets={myBets} />}
+          {tab === "info" && <InfoTab player={player} stats={stats} bets={myBets} loginEvents={loginEvents} />}
           {tab === "transactions" && <TransactionsTab events={events} />}
           {tab === "active" && <BetList bets={active} emptyText="No active bets" />}
           {tab === "history" && <BetList bets={history} emptyText="No settled bets yet" />}
@@ -154,15 +159,15 @@ export default function PlayerDetailSheet({ player, bets, currentUser, onClose }
             <div className="bg-[#0d1321] border border-white/10 rounded-2xl p-5 w-full max-w-xs">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="font-bold text-slate-200">
-                  {allocOpen === "give" ? `Give chips to ${player.name}` : `Take chips from ${player.name}`}
+                  {allocOpen === "give" ? `Add Balance — ${player.name}` : `Deduct from ${player.name}`}
                 </h4>
                 <button onClick={() => setAllocOpen(null)} className="text-slate-500 hover:text-slate-200">
                   <X size={16} />
                 </button>
               </div>
               <div className="bg-white/5 border border-white/10 rounded-xl p-2.5 text-xs mb-3 space-y-1">
-                <div className="flex justify-between"><span className="text-slate-400">Your balance</span><span className="font-bold text-yellow-400 tabular-nums">{currentUser.chips.toLocaleString()}</span></div>
-                <div className="flex justify-between"><span className="text-slate-400">{player.name}&apos;s balance</span><span className="font-bold text-slate-300 tabular-nums">{player.chips.toLocaleString()}</span></div>
+                <div className="flex justify-between"><span className="text-slate-400">Your balance</span><span className="font-bold text-yellow-400 tabular-nums">₹{currentUser.chips.toLocaleString()}</span></div>
+                <div className="flex justify-between"><span className="text-slate-400">{player.name}&apos;s balance</span><span className="font-bold text-slate-300 tabular-nums">₹{player.chips.toLocaleString()}</span></div>
               </div>
               <input
                 type="number"
@@ -180,7 +185,7 @@ export default function PlayerDetailSheet({ player, bets, currentUser, onClose }
               </div>
               {allocError && <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2 mb-2">{allocError}</p>}
               <button onClick={handleAllocate} className={cn("w-full font-bold py-2.5 rounded-xl transition-all active:scale-[0.98]", allocOpen === "give" ? "bg-emerald-500 hover:bg-emerald-400 text-white" : "bg-orange-500 hover:bg-orange-400 text-white")}>
-                {allocOpen === "give" ? "Give" : "Take"} {amount || "0"} chips
+                {allocOpen === "give" ? "Add" : "Deduct"} ₹{amount || "0"}
               </button>
             </div>
           </div>
@@ -192,7 +197,7 @@ export default function PlayerDetailSheet({ player, bets, currentUser, onClose }
 
 // ── Info tab ──────────────────────────────────────────────────────────────────
 
-function InfoTab({ player, stats, bets }: { player: User; stats: ReturnType<typeof statsForClient>; bets: Bet[] }) {
+function InfoTab({ player, stats, bets, loginEvents }: { player: User; stats: ReturnType<typeof statsForClient>; bets: Bet[]; loginEvents: LoginEvent[] }) {
   const fmt = (ts: number) =>
     new Date(ts).toLocaleString("en-IN", {
       day: "2-digit", month: "short", year: "numeric",
@@ -202,11 +207,14 @@ function InfoTab({ player, stats, bets }: { player: User; stats: ReturnType<type
   const firstBetAt = bets.length ? Math.min(...bets.map((b) => b.placedAt)) : null;
   const lastBetAt = bets.length ? Math.max(...bets.map((b) => b.placedAt)) : null;
 
+  const isMobile = (device: string) =>
+    /iPhone|iPad|Android/i.test(device);
+
   return (
     <div className="space-y-4">
       <StatsPanel stats={stats} perspective="client" />
 
-      {/* Account timestamps */}
+      {/* Account details */}
       <div className="bg-[#0d1321] border border-white/5 rounded-2xl overflow-hidden">
         <p className="text-[10px] font-bold text-slate-600 uppercase tracking-wider px-4 pt-3 pb-1.5">Account Details</p>
         <div className="divide-y divide-white/5">
@@ -218,15 +226,37 @@ function InfoTab({ player, stats, bets }: { player: User; stats: ReturnType<type
             valueClass={player.lastLoginAt ? "text-emerald-400" : "text-slate-600"}
           />
           {firstBetAt && (
-            <InfoRow icon={<Receipt size={13} className="text-blue-400" />} label="First bet placed" value={fmt(firstBetAt)} />
+            <InfoRow icon={<Receipt size={13} className="text-blue-400" />} label="First bet" value={fmt(firstBetAt)} />
           )}
           {lastBetAt && (
-            <InfoRow icon={<Clock size={13} className="text-purple-400" />} label="Last bet placed" value={fmt(lastBetAt)} />
+            <InfoRow icon={<Clock size={13} className="text-purple-400" />} label="Last bet" value={fmt(lastBetAt)} />
           )}
-          <InfoRow icon={<Activity size={13} className="text-slate-400" />} label="Total bets placed" value={String(stats.totalBets)} />
-          <InfoRow icon={<Wallet size={13} className="text-slate-400" />} label="Total wagered" value={stats.totalStaked.toLocaleString()} />
+          <InfoRow icon={<Activity size={13} className="text-slate-400" />} label="Total bets" value={String(stats.totalBets)} />
+          <InfoRow icon={<Wallet size={13} className="text-slate-400" />} label="Total wagered" value={`₹${stats.totalStaked.toLocaleString()}`} />
         </div>
       </div>
+
+      {/* Login history */}
+      {loginEvents.length > 0 && (
+        <div className="bg-[#0d1321] border border-white/5 rounded-2xl overflow-hidden">
+          <p className="text-[10px] font-bold text-slate-600 uppercase tracking-wider px-4 pt-3 pb-1.5">
+            Login History ({loginEvents.length})
+          </p>
+          <div className="divide-y divide-white/5">
+            {loginEvents.slice(0, 10).map((le) => (
+              <div key={le.id} className="flex items-center gap-3 px-4 py-2.5">
+                <span className="shrink-0 text-slate-500">
+                  {isMobile(le.device) ? <Smartphone size={13} className="text-blue-400" /> : <Monitor size={13} className="text-purple-400" />}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-slate-300">{le.device} · {le.browser}</p>
+                  <p className="text-[10px] text-slate-600">{fmt(le.timestamp)}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Win/loss summary */}
       {stats.totalBets > 0 && (
@@ -317,7 +347,7 @@ function TransactionsTab({ events }: { events: AccountEvent[] }) {
             </div>
             <div className="flex-1 min-w-0">
               <p className={cn("text-xs font-bold tabular-nums", isIn ? "text-emerald-400" : "text-orange-400")}>
-                {isIn ? "+" : "-"}{e.amount?.toLocaleString()} chips
+                {isIn ? "+" : "-"}₹{e.amount?.toLocaleString()}
               </p>
               <p className="text-[11px] text-slate-500">{isIn ? "from" : "to"} {e.byName}</p>
             </div>
@@ -345,20 +375,18 @@ function BetList({ bets, emptyText }: { bets: Bet[]; emptyText: string }) {
     <div className="space-y-1.5">
       {bets.map((b) => {
         const placedAt = new Date(b.placedAt);
-        const now = Date.now();
-        const ageMs = now - b.placedAt;
+        const ageMs = Date.now() - b.placedAt;
         const ageMin = Math.floor(ageMs / 60_000);
         const ageHours = Math.floor(ageMs / 3_600_000);
         const ageDays = Math.floor(ageMs / 86_400_000);
-        const ageLabel =
-          ageDays > 0
-            ? placedAt.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
-            : ageHours > 0
-            ? `${ageHours}h ago`
-            : ageMin > 0
-            ? `${ageMin}m ago`
-            : "just now";
-        const timeLabel = placedAt.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+        const relLabel =
+          ageDays > 0 ? `${ageDays}d ago` :
+          ageHours > 0 ? `${ageHours}h ago` :
+          ageMin > 0 ? `${ageMin}m ago` : "just now";
+        const fullTs = placedAt.toLocaleString("en-IN", {
+          day: "2-digit", month: "short", year: "numeric",
+          hour: "2-digit", minute: "2-digit", hour12: true,
+        });
         const payout = Math.round(b.stake * b.odds);
 
         return (
@@ -379,16 +407,20 @@ function BetList({ bets, emptyText }: { bets: Bet[]; emptyText: string }) {
                 {b.status}
               </span>
             </div>
+            {/* Full timestamp always visible */}
+            <div className="flex items-center gap-1 text-[10px] text-slate-600 mb-1.5">
+              <Clock size={9} />
+              <span>{fullTs}</span>
+              <span className="text-slate-700">·</span>
+              <span>{relLabel}</span>
+            </div>
             <div className="flex justify-between items-center text-[11px]">
-              <span className="text-slate-500 flex items-center gap-1">
-                <Clock size={10} />
-                <span>{ageLabel}</span>
-                {ageDays > 0 && <span className="text-slate-600">{timeLabel}</span>}
-                <span className="text-slate-600">· stake {b.stake.toLocaleString()}</span>
+              <span className="text-slate-500">
+                Stake <span className="text-slate-400 tabular-nums">₹{b.stake.toLocaleString()}</span>
               </span>
-              {b.status === "won" && <span className="text-emerald-400 font-bold">+{payout.toLocaleString()}</span>}
-              {b.status === "lost" && <span className="text-red-400 font-bold">-{b.stake.toLocaleString()}</span>}
-              {b.status === "pending" && <span className="text-slate-400">pot. {payout.toLocaleString()}</span>}
+              {b.status === "won" && <span className="text-emerald-400 font-bold">+₹{payout.toLocaleString()}</span>}
+              {b.status === "lost" && <span className="text-red-400 font-bold">-₹{b.stake.toLocaleString()}</span>}
+              {b.status === "pending" && <span className="text-slate-400">potential ₹{payout.toLocaleString()}</span>}
             </div>
           </div>
         );

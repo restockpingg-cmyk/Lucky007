@@ -32,9 +32,21 @@ export interface Bet {
   placedAt: number;
 }
 
+export interface CommissionChange {
+  id: string;
+  userId: string;
+  userName: string;
+  userRole: Role;
+  fromRate: number | undefined;
+  toRate: number;
+  changedAt: number;
+  changedBy: string;
+}
+
 interface Store {
   users: User[];
   bets: Bet[];
+  commissionHistory: CommissionChange[];
   currentUserId: string | null;
 }
 
@@ -51,7 +63,7 @@ function seed(): Store {
     parentId: null,
     createdAt: Date.now(),
   };
-  return { users: [owner], bets: [], currentUserId: null };
+  return { users: [owner], bets: [], commissionHistory: [], currentUserId: null };
 }
 
 function read(): Store {
@@ -63,7 +75,9 @@ function read(): Store {
       localStorage.setItem(KEY, JSON.stringify(fresh));
       return fresh;
     }
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw) as Store;
+    if (!parsed.commissionHistory) parsed.commissionHistory = [];
+    return parsed;
   } catch {
     return seed();
   }
@@ -380,6 +394,32 @@ export function statsForOwner(ownerId: string, users: User[], bets: Bet[]): Stat
     biggestWin,
     biggestLoss,
   };
+}
+
+export function updateCommission(
+  targetUserId: string,
+  newRate: number,
+  changedById: string
+): { ok: true } | { ok: false; error: string } {
+  if (newRate < 0 || newRate > 100) return { ok: false, error: "Rate must be 0–100%" };
+  const s = read();
+  const target = s.users.find((u) => u.id === targetUserId);
+  if (!target) return { ok: false, error: "User not found" };
+  if (!["cobookie", "client"].includes(target.role)) return { ok: false, error: "Cannot set commission for this role" };
+  const change: CommissionChange = {
+    id: `cc_${Math.random().toString(36).slice(2, 10)}`,
+    userId: targetUserId,
+    userName: target.name,
+    userRole: target.role,
+    fromRate: target.commission,
+    toRate: newRate,
+    changedAt: Date.now(),
+    changedBy: changedById,
+  };
+  target.commission = newRate;
+  s.commissionHistory.push(change);
+  write(s);
+  return { ok: true };
 }
 
 export function resetAll() {

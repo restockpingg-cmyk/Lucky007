@@ -5,18 +5,20 @@ import { useRouter } from "next/navigation";
 import {
   Coins, Users, Receipt, BarChart3, History, Clock, TrendingUp, TrendingDown,
   Plus, ChevronRight, Activity, Percent, ArrowUpRight, ArrowDownLeft, X, ChevronDown, ChevronUp,
+  Pencil, ScrollText,
 } from "lucide-react";
 import TopBar from "@/components/TopBar";
 import StatsPanel from "@/components/StatsPanel";
 import PlayerDetailSheet from "@/components/PlayerDetailSheet";
 import Loading from "@/components/Loading";
 import {
-  useStore, useHydrated, statsForAdmin, statsForClient,
-  createUser, allocateChips, reclaimChips, type User, type Stats,
+  useStore, useHydrated, statsForClient,
+  createUser, allocateChips, reclaimChips, updateCommission,
+  type User, type Stats, type CommissionChange,
 } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
-type Tab = "overview" | "players" | "cobookies" | "live" | "history";
+type Tab = "overview" | "players" | "cobookies" | "live" | "history" | "commlog";
 
 export default function AdminDashboard() {
   const router = useRouter();
@@ -72,12 +74,15 @@ export default function AdminDashboard() {
     biggestLoss: nWon.reduce((m, b) => Math.max(m, Math.round(b.stake * (b.odds - 1))), 0),
   };
 
+  const commLog = (store.commissionHistory ?? []).slice().reverse(); // most recent first
+
   const tabs: { id: Tab; label: string; icon: React.ReactNode; badge?: number }[] = [
     { id: "overview", label: "Overview", icon: <BarChart3 size={14} /> },
     { id: "players", label: "Players", icon: <Users size={14} />, badge: allNetworkClients.length },
     { id: "cobookies", label: "Co-Bookies", icon: <Percent size={14} />, badge: cobookies.length },
     { id: "live", label: "Live", icon: <Activity size={14} />, badge: pendingBets.length },
     { id: "history", label: "History", icon: <History size={14} />, badge: resolvedBets.length },
+    { id: "commlog", label: "Comm Log", icon: <ScrollText size={14} />, badge: commLog.length || undefined },
   ];
 
   return (
@@ -140,6 +145,7 @@ export default function AdminDashboard() {
         )}
         {tab === "live" && <LiveTab clients={allNetworkClients} bets={pendingBets} onOpenPlayer={setOpenPlayer} />}
         {tab === "history" && <HistoryTab clients={allNetworkClients} bets={resolvedBets} />}
+        {tab === "commlog" && <CommLogTab log={commLog} />}
       </main>
 
       {openPlayer && (
@@ -226,8 +232,13 @@ function PlayersTab({
   const [username, setUsername] = useState("");
   const [pin, setPin] = useState("");
   const [commission, setCommission] = useState("");
-  const [assignTo, setAssignTo] = useState<string>(admin.id); // admin id or cobookie id
+  const [assignTo, setAssignTo] = useState<string>(admin.id);
   const [createError, setCreateError] = useState("");
+
+  // Edit commission state
+  const [editTarget, setEditTarget] = useState<User | null>(null);
+  const [editRate, setEditRate] = useState("");
+  const [editError, setEditError] = useState("");
 
   const totalPlayers = directClients.length + cbClients.length;
 
@@ -275,7 +286,7 @@ function PlayersTab({
               <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
                 <Users size={11} /> Direct players ({directClients.length})
               </h3>
-              <PlayerGrid clients={directClients} bets={bets} onOpenPlayer={onOpenPlayer} />
+              <PlayerGrid clients={directClients} bets={bets} onOpenPlayer={onOpenPlayer} onEditCommission={(u) => { setEditTarget(u); setEditRate(String(u.commission ?? "")); setEditError(""); }} />
             </section>
           )}
 
@@ -290,7 +301,7 @@ function PlayersTab({
                 {group.length === 0 ? (
                   <p className="text-xs text-slate-600 pl-3">No players yet</p>
                 ) : (
-                  <PlayerGrid clients={group} bets={bets} onOpenPlayer={onOpenPlayer} />
+                  <PlayerGrid clients={group} bets={bets} onOpenPlayer={onOpenPlayer} onEditCommission={(u) => { setEditTarget(u); setEditRate(String(u.commission ?? "")); setEditError(""); }} />
                 )}
               </section>
             );
@@ -350,33 +361,86 @@ function PlayersTab({
           </div>
         </div>
       )}
+
+      {/* Edit commission modal */}
+      {editTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setEditTarget(null)} />
+          <div className="relative bg-[#0d1321] border border-white/10 rounded-2xl p-5 w-full max-w-xs shadow-2xl">
+            <div className="flex items-center justify-between mb-1">
+              <h4 className="font-bold text-slate-200">Edit Commission</h4>
+              <button onClick={() => setEditTarget(null)} className="text-slate-500 hover:text-slate-200"><X size={16} /></button>
+            </div>
+            <p className="text-xs text-slate-500 mb-3">{editTarget.name} · @{editTarget.username}</p>
+            <div className="flex items-center gap-2 mb-2">
+              <input
+                type="number"
+                inputMode="numeric"
+                min="0"
+                max="100"
+                value={editRate}
+                onChange={(e) => setEditRate(e.target.value)}
+                placeholder="e.g. 15"
+                className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-3 text-base text-slate-200 placeholder-slate-600 focus:outline-none focus:border-yellow-400/50 transition-colors"
+                autoFocus
+              />
+              <span className="text-slate-400 font-bold text-lg">%</span>
+            </div>
+            <div className="flex gap-1.5 mb-3">
+              {[5, 10, 15, 20, 25].map((v) => (
+                <button key={v} onClick={() => setEditRate(String(v))} className="flex-1 text-xs py-1.5 rounded-lg bg-white/5 hover:bg-purple-400/10 hover:text-purple-400 text-slate-400 transition-colors">{v}%</button>
+              ))}
+            </div>
+            {editTarget.commission !== undefined && (
+              <p className="text-[10px] text-slate-500 mb-2">Current: <span className="text-purple-400 font-semibold">{editTarget.commission}%</span></p>
+            )}
+            {editError && <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2 mb-2">{editError}</p>}
+            <button
+              onClick={() => {
+                setEditError("");
+                const n = parseInt(editRate);
+                if (isNaN(n) || n < 0 || n > 100) return setEditError("Enter a rate between 0 and 100");
+                const res = updateCommission(editTarget.id, n, admin.id);
+                if (!res.ok) return setEditError(res.error);
+                setEditTarget(null);
+              }}
+              className="w-full bg-purple-500 hover:bg-purple-400 active:scale-[0.98] text-white font-bold py-2.5 rounded-xl transition-all"
+            >
+              Save Commission
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function PlayerGrid({ clients, bets, onOpenPlayer }: { clients: User[]; bets: ReturnType<typeof useStore>["bets"]; onOpenPlayer: (p: User) => void }) {
+function PlayerGrid({ clients, bets, onOpenPlayer, onEditCommission }: { clients: User[]; bets: ReturnType<typeof useStore>["bets"]; onOpenPlayer: (p: User) => void; onEditCommission: (u: User) => void }) {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
       {clients.map((c) => {
         const s = statsForClient(c.id, bets);
         return (
-          <button key={c.id} onClick={() => onOpenPlayer(c)} className="bg-[#111827] border border-white/5 rounded-2xl p-3 hover:border-white/10 transition-colors text-left">
+          <div key={c.id} className="bg-[#111827] border border-white/5 rounded-2xl p-3 hover:border-white/10 transition-colors">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-yellow-400/20 to-yellow-600/10 border border-yellow-400/20 flex items-center justify-center text-yellow-400 font-bold shrink-0">
+              <button onClick={() => onOpenPlayer(c)} className="w-10 h-10 rounded-full bg-gradient-to-br from-yellow-400/20 to-yellow-600/10 border border-yellow-400/20 flex items-center justify-center text-yellow-400 font-bold shrink-0">
                 {c.name.charAt(0).toUpperCase()}
-              </div>
-              <div className="flex-1 min-w-0">
+              </button>
+              <button onClick={() => onOpenPlayer(c)} className="flex-1 min-w-0 text-left">
                 <p className="font-semibold text-slate-200 truncate">{c.name}</p>
                 <p className="text-xs text-slate-500 font-mono truncate">@{c.username}</p>
-              </div>
+              </button>
               <div className="text-right shrink-0">
                 <p className="text-sm font-bold text-yellow-400 tabular-nums">{c.chips.toLocaleString()}</p>
-                {c.commission !== undefined && (
-                  <span className="text-[9px] text-purple-400 bg-purple-500/10 border border-purple-500/20 px-1.5 py-0.5 rounded-full font-bold">{c.commission}% comm</span>
-                )}
+                <button
+                  onClick={(e) => { e.stopPropagation(); onEditCommission(c); }}
+                  className="flex items-center gap-0.5 text-[9px] text-purple-400 bg-purple-500/10 border border-purple-500/20 px-1.5 py-0.5 rounded-full font-bold hover:bg-purple-500/20 transition-colors mt-0.5"
+                >
+                  {c.commission !== undefined ? `${c.commission}%` : "Set %"} <Pencil size={8} />
+                </button>
               </div>
             </div>
-            <div className="flex items-center justify-between text-[11px]">
+            <button onClick={() => onOpenPlayer(c)} className="w-full flex items-center justify-between text-[11px]">
               <div className="flex items-center gap-2 text-slate-500">
                 <span>{s.totalBets} bets</span>
                 {s.pending > 0 && <span className="text-blue-400">{s.pending} live</span>}
@@ -384,8 +448,8 @@ function PlayerGrid({ clients, bets, onOpenPlayer }: { clients: User[]; bets: Re
               <span className={cn("font-bold tabular-nums", s.profit >= 0 ? "text-emerald-400" : "text-red-400")}>
                 {s.profit >= 0 ? "+" : ""}{s.profit.toLocaleString()}
               </span>
-            </div>
-          </button>
+            </button>
+          </div>
         );
       })}
     </div>
@@ -416,6 +480,11 @@ function CoBookiesTab({
   const [chipDialog, setChipDialog] = useState<{ cb: User; type: "give" | "take" } | null>(null);
   const [chipAmount, setChipAmount] = useState("");
   const [chipError, setChipError] = useState("");
+
+  // Edit commission state
+  const [editTarget, setEditTarget] = useState<User | null>(null);
+  const [editRate, setEditRate] = useState("");
+  const [editError, setEditError] = useState("");
 
   // Expanded state per co-bookie
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -521,9 +590,12 @@ function CoBookiesTab({
 
                   {/* Commission badge and player count */}
                   <div className="flex items-center gap-2 mb-3">
-                    <span className="text-xs font-bold text-purple-400 bg-purple-500/10 border border-purple-500/20 px-2 py-0.5 rounded-full">
-                      {cb.commission ?? 0}% commission
-                    </span>
+                    <button
+                      onClick={() => { setEditTarget(cb); setEditRate(String(cb.commission ?? "")); setEditError(""); }}
+                      className="flex items-center gap-1 text-xs font-bold text-purple-400 bg-purple-500/10 border border-purple-500/20 px-2 py-0.5 rounded-full hover:bg-purple-500/20 transition-colors"
+                    >
+                      {cb.commission ?? 0}% commission <Pencil size={9} />
+                    </button>
                     <span className="text-xs text-slate-500">{cbClients.length} player{cbClients.length !== 1 ? "s" : ""}</span>
                     {cbBets.filter(b => b.status === "pending").length > 0 && (
                       <span className="text-xs text-blue-400">{cbBets.filter(b => b.status === "pending").length} active bets</span>
@@ -714,6 +786,56 @@ function CoBookiesTab({
           </div>
         </div>
       )}
+
+      {/* Edit co-bookie commission modal */}
+      {editTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setEditTarget(null)} />
+          <div className="relative bg-[#0d1321] border border-white/10 rounded-2xl p-5 w-full max-w-xs shadow-2xl">
+            <div className="flex items-center justify-between mb-1">
+              <h4 className="font-bold text-slate-200">Edit Commission</h4>
+              <button onClick={() => setEditTarget(null)} className="text-slate-500 hover:text-slate-200"><X size={16} /></button>
+            </div>
+            <p className="text-xs text-slate-500 mb-3">{editTarget.name} · co-bookie</p>
+            <div className="flex items-center gap-2 mb-2">
+              <input
+                type="number"
+                inputMode="numeric"
+                min="0"
+                max="100"
+                value={editRate}
+                onChange={(e) => setEditRate(e.target.value)}
+                placeholder="e.g. 20"
+                className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-3 text-base text-slate-200 placeholder-slate-600 focus:outline-none focus:border-purple-400/50 transition-colors"
+                autoFocus
+              />
+              <span className="text-slate-400 font-bold text-lg">%</span>
+            </div>
+            <div className="flex gap-1.5 mb-3">
+              {[5, 10, 15, 20, 25, 30].map((v) => (
+                <button key={v} onClick={() => setEditRate(String(v))} className="flex-1 text-xs py-1.5 rounded-lg bg-white/5 hover:bg-purple-400/10 hover:text-purple-400 text-slate-400 transition-colors">{v}%</button>
+              ))}
+            </div>
+            {editTarget.commission !== undefined && (
+              <p className="text-[10px] text-slate-500 mb-2">Current: <span className="text-purple-400 font-semibold">{editTarget.commission}%</span></p>
+            )}
+            {editError && <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2 mb-2">{editError}</p>}
+            <button
+              onClick={() => {
+                setEditError("");
+                const n = parseInt(editRate);
+                if (isNaN(n) || n < 0 || n > 100) return setEditError("Enter a rate between 0 and 100");
+                const res = updateCommission(editTarget.id, n, admin.id);
+                if (!res.ok) return setEditError(res.error);
+                setEditTarget(null);
+              }}
+              className="w-full bg-purple-500 hover:bg-purple-400 active:scale-[0.98] text-white font-bold py-2.5 rounded-xl transition-all"
+            >
+              Save Commission
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -827,6 +949,85 @@ function HistoryTab({
             <span className={cn("text-sm font-bold tabular-nums shrink-0", houseProfit >= 0 ? "text-emerald-400" : "text-red-400")}>
               {houseProfit >= 0 ? "+" : ""}{houseProfit.toLocaleString()}
             </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Commission Log ────────────────────────────────────────────────────────────
+
+function CommLogTab({ log }: { log: CommissionChange[] }) {
+  if (log.length === 0) {
+    return (
+      <div className="bg-[#111827] border border-white/5 rounded-2xl p-8 text-center">
+        <ScrollText size={28} className="text-slate-700 mx-auto mb-2" />
+        <p className="text-slate-500 text-sm">No commission changes yet</p>
+        <p className="text-slate-600 text-xs mt-1">Changes to commission rates appear here</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <p className="text-xs text-slate-500">{log.length} change{log.length !== 1 ? "s" : ""} recorded</p>
+      {log.map((c) => {
+        const ageMs = Date.now() - c.changedAt;
+        const ageMins = Math.floor(ageMs / 60_000);
+        const ageHours = Math.floor(ageMs / 3_600_000);
+        const ageDays = Math.floor(ageMs / 86_400_000);
+        const ageLabel = ageDays > 0 ? `${ageDays}d ago` : ageHours > 0 ? `${ageHours}h ago` : ageMins > 0 ? `${ageMins}m ago` : "just now";
+
+        const isNew = c.fromRate === undefined;
+        const increased = !isNew && c.toRate > (c.fromRate ?? 0);
+
+        return (
+          <div key={c.id} className="bg-[#111827] border border-white/5 rounded-xl p-3 flex items-center gap-3">
+            <div className={cn(
+              "w-8 h-8 rounded-full flex items-center justify-center shrink-0 font-bold text-sm",
+              c.userRole === "cobookie"
+                ? "bg-purple-500/20 text-purple-400 border border-purple-500/20"
+                : "bg-yellow-400/20 text-yellow-400 border border-yellow-400/20"
+            )}>
+              {c.userName.charAt(0).toUpperCase()}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5 mb-0.5">
+                <p className="text-sm font-semibold text-slate-200 truncate">{c.userName}</p>
+                <span className={cn(
+                  "text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full border",
+                  c.userRole === "cobookie"
+                    ? "text-purple-400 bg-purple-500/10 border-purple-500/20"
+                    : "text-yellow-400 bg-yellow-400/10 border-yellow-400/20"
+                )}>
+                  {c.userRole === "cobookie" ? "Co-Bookie" : "Player"}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 text-xs">
+                {isNew ? (
+                  <span className="text-slate-400">Set to <span className="font-bold text-purple-400">{c.toRate}%</span></span>
+                ) : (
+                  <>
+                    <span className="text-slate-500 font-mono">{c.fromRate}%</span>
+                    <span className="text-slate-600">→</span>
+                    <span className={cn("font-bold font-mono", increased ? "text-emerald-400" : "text-orange-400")}>{c.toRate}%</span>
+                    {increased
+                      ? <span className="text-emerald-400/60 text-[10px]">▲ +{c.toRate - (c.fromRate ?? 0)}%</span>
+                      : <span className="text-orange-400/60 text-[10px]">▼ -{(c.fromRate ?? 0) - c.toRate}%</span>
+                    }
+                  </>
+                )}
+              </div>
+            </div>
+            <div className="text-right shrink-0">
+              <p className="text-[10px] text-slate-500 flex items-center justify-end gap-0.5">
+                <Clock size={9} /> {ageLabel}
+              </p>
+              <p className="text-[9px] text-slate-600 mt-0.5">
+                {new Date(c.changedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+              </p>
+            </div>
           </div>
         );
       })}

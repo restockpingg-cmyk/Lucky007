@@ -2,25 +2,21 @@
 
 import { cn } from "@/lib/utils";
 
-export interface BackLaySelection {
-  market: string;
-  pick: string;
-  odds: number;
-  side: "back" | "lay";
-}
-
 interface Props {
   label: string;
   sublabel?: string;
   odds: number;
   activeSide?: "back" | "lay" | null;
   onPick: (side: "back" | "lay") => void;
-  layOdds?: number; // optional, defaults to slightly tighter than back
+  layOdds?: number;
+  stake?: number; // when set, shows the payout amount on the button
 }
 
-export default function BackLayOdds({ label, sublabel, odds, activeSide, onPick, layOdds }: Props) {
-  // Lay typically a bit higher than back (the spread)
+export default function BackLayOdds({ label, sublabel, odds, activeSide, onPick, layOdds, stake }: Props) {
   const computedLayOdds = layOdds ?? Math.round((odds + 0.05) * 100) / 100;
+
+  const backPayout = stake ? Math.round(stake * odds) : null;
+  const layPayout = stake ? Math.round(stake * computedLayOdds) : null;
 
   return (
     <div className="bg-[#0d1321] rounded-xl overflow-hidden border border-white/5">
@@ -40,6 +36,11 @@ export default function BackLayOdds({ label, sublabel, odds, activeSide, onPick,
         >
           <span className="text-[8px] uppercase tracking-wider opacity-70 font-semibold">Back</span>
           <span className="text-sm font-bold tabular-nums">{odds.toFixed(2)}</span>
+          {backPayout !== null && (
+            <span className={cn("text-[9px] tabular-nums font-semibold mt-0.5", activeSide === "back" ? "text-black/70" : "text-cyan-400/70")}>
+              ₹{backPayout.toLocaleString("en-IN")}
+            </span>
+          )}
         </button>
         <button
           onClick={() => onPick("lay")}
@@ -52,6 +53,11 @@ export default function BackLayOdds({ label, sublabel, odds, activeSide, onPick,
         >
           <span className="text-[8px] uppercase tracking-wider opacity-70 font-semibold">Lay</span>
           <span className="text-sm font-bold tabular-nums">{computedLayOdds.toFixed(2)}</span>
+          {layPayout !== null && (
+            <span className={cn("text-[9px] tabular-nums font-semibold mt-0.5", activeSide === "lay" ? "text-black/70" : "text-pink-400/70")}>
+              ₹{layPayout.toLocaleString("en-IN")}
+            </span>
+          )}
         </button>
       </div>
     </div>

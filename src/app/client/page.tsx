@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Check, Receipt, X, Trash2, Sparkles, Clock, RefreshCw, ChevronRight, Activity, CalendarClock } from "lucide-react";
 import TopBar from "@/components/TopBar";
@@ -60,6 +60,14 @@ export default function ClientDashboard() {
     return () => clearInterval(i);
   }, []);
 
+  // Tick every 5s to drive odds fluctuation
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const i = setInterval(() => setTick((n) => n + 1), 5_000);
+    return () => clearInterval(i);
+  }, []);
+
+  // Re-render scores every 30s
   const [, setNow] = useState(0);
   useEffect(() => {
     const i = setInterval(() => setNow((n) => n + 1), 30_000);
@@ -78,7 +86,26 @@ export default function ClientDashboard() {
   const myBets = store.bets.filter((b) => b.clientId === me.id).sort((a, b) => b.placedAt - a.placedAt);
   const pendingCount = myBets.filter((b) => b.status === "pending").length;
   const stats = statsForClient(me.id, store.bets);
-  const allMatches = liveData.matches;
+
+  // Fluctuate odds on live matches every tick — sine wave per option so they breathe naturally
+  const allMatches = useMemo(() => {
+    return liveData.matches.map((m) => {
+      if (m.status !== "live") return m;
+      return {
+        ...m,
+        markets: m.markets.map((mk) => ({
+          ...mk,
+          options: mk.options.map((op) => {
+            const seed = op.id.split("").reduce((h, c) => ((h << 5) + h + c.charCodeAt(0)) | 0, m.id.length);
+            const phase = (Math.abs(seed) % 628) / 100; // 0..2π
+            const amp = 0.04 + (Math.abs(seed) % 12) / 100; // 0.04..0.16
+            const delta = Math.sin(tick * 0.9 + phase) * amp;
+            return { ...op, odds: Math.max(1.01, Math.round((op.odds + delta) * 100) / 100) };
+          }),
+        })),
+      };
+    });
+  }, [liveData.matches, tick]);
   const filtered = tab === "all" ? allMatches : allMatches.filter((m) => m.sport === tab);
   const live = filtered.filter((m) => m.status === "live");
   const upcoming = filtered.filter((m) => m.status === "upcoming");
@@ -130,6 +157,7 @@ export default function ClientDashboard() {
             filtered={filtered}
             picks={picks}
             myBets={myBets}
+            stake={parseInt(stake) || 0}
             onOpen={(m) => setOpenMatch(m)}
             onPick={togglePick}
           />
@@ -140,6 +168,7 @@ export default function ClientDashboard() {
             matches={inplayMatches}
             picks={picks}
             myBets={myBets}
+            stake={parseInt(stake) || 0}
             onOpen={(m) => setOpenMatch(m)}
             onPick={togglePick}
           />
@@ -305,16 +334,7 @@ export default function ClientDashboard() {
 // ---------- Views ----------
 
 function SportsView({
-  liveData,
-  tab,
-  setTab,
-  live,
-  upcoming,
-  filtered,
-  picks,
-  myBets,
-  onOpen,
-  onPick,
+  liveData, tab, setTab, live, upcoming, filtered, picks, myBets, stake, onOpen, onPick,
 }: {
   liveData: ReturnType<typeof useLiveMatches>;
   tab: "all" | Sport;
@@ -324,6 +344,7 @@ function SportsView({
   filtered: Match[];
   picks: BetSelection[];
   myBets: Bet[];
+  stake: number;
   onOpen: (m: Match) => void;
   onPick: (p: BetSelection) => void;
 }) {
@@ -344,7 +365,7 @@ function SportsView({
           <SectionHeader title="Live Now" badge={live.length} live />
           <div className="space-y-2.5">
             {live.map((m) => (
-              <MatchRow key={m.id} match={m} picks={picks} myBets={myBets} onOpen={() => onOpen(m)} onPick={onPick} />
+              <MatchRow key={m.id} match={m} picks={picks} myBets={myBets} stake={stake} onOpen={() => onOpen(m)} onPick={onPick} />
             ))}
           </div>
         </section>
@@ -355,7 +376,7 @@ function SportsView({
           <SectionHeader title="Upcoming" badge={upcoming.length} />
           <div className="space-y-2.5">
             {upcoming.map((m) => (
-              <MatchRow key={m.id} match={m} picks={picks} myBets={myBets} onOpen={() => onOpen(m)} onPick={onPick} />
+              <MatchRow key={m.id} match={m} picks={picks} myBets={myBets} stake={stake} onOpen={() => onOpen(m)} onPick={onPick} />
             ))}
           </div>
         </section>
@@ -373,15 +394,12 @@ function SportsView({
 }
 
 function InPlayView({
-  matches,
-  picks,
-  myBets,
-  onOpen,
-  onPick,
+  matches, picks, myBets, stake, onOpen, onPick,
 }: {
   matches: Match[];
   picks: BetSelection[];
   myBets: Bet[];
+  stake: number;
   onOpen: (m: Match) => void;
   onPick: (p: BetSelection) => void;
 }) {
@@ -404,7 +422,7 @@ function InPlayView({
       </div>
       <div className="space-y-2.5">
         {matches.map((m) => (
-          <MatchRow key={m.id} match={m} picks={picks} myBets={myBets} onOpen={() => onOpen(m)} onPick={onPick} />
+          <MatchRow key={m.id} match={m} picks={picks} myBets={myBets} stake={stake} onOpen={() => onOpen(m)} onPick={onPick} />
         ))}
       </div>
     </section>
@@ -578,12 +596,14 @@ function MatchRow({
   match,
   picks,
   myBets,
+  stake,
   onPick,
   onOpen,
 }: {
   match: Match;
   picks: BetSelection[];
   myBets: Bet[];
+  stake: number;
   onPick: (p: BetSelection) => void;
   onOpen: () => void;
 }) {
@@ -667,6 +687,7 @@ function MatchRow({
             label={match.homeTeam.split(" ")[0]}
             sublabel="Home"
             odds={odds.home}
+            stake={stake || undefined}
             activeSide={activeSideFor("home")}
             onPick={(side) => onPick(pickFor("home", match.homeTeam, odds.home, side))}
           />
@@ -674,6 +695,7 @@ function MatchRow({
             <BackLayOdds
               label="Draw"
               odds={odds.draw}
+              stake={stake || undefined}
               activeSide={activeSideFor("draw")}
               onPick={(side) => onPick(pickFor("draw", "Draw", odds.draw!, side))}
             />
@@ -682,6 +704,7 @@ function MatchRow({
             label={match.awayTeam.split(" ")[0]}
             sublabel="Away"
             odds={odds.away}
+            stake={stake || undefined}
             activeSide={activeSideFor("away")}
             onPick={(side) => onPick(pickFor("away", match.awayTeam, odds.away, side))}
           />

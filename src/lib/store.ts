@@ -13,8 +13,9 @@ export interface User {
   chips: number;
   parentId: string | null;
   createdAt: number;
-  commission?: number;      // % of house profit that goes to the assigned co-bookie
-  commissionTo?: string;    // which co-bookie receives the commission on this player's P&L
+  commission?: number;           // % of house profit that goes to the assigned co-bookie
+  commissionTo?: string;         // which co-bookie receives the commission on this player's P&L
+  commissionAssignedAt?: number; // timestamp — only bets placed AFTER this count toward commission
 }
 
 export type BetSide = "back" | "lay";
@@ -192,7 +193,20 @@ export function reassignPlayer(
   if (!player || player.role !== "client") return { ok: false, error: "Player not found" };
   const newParent = s.users.find((u) => u.id === newParentId);
   if (!newParent) return { ok: false, error: "Target not found" };
+
   player.parentId = newParentId;
+  const now = Date.now();
+
+  // If new parent is a co-bookie, point commissionTo at them and reset the cutoff
+  if (newParent.role === "cobookie") {
+    player.commissionTo = newParentId;
+    player.commissionAssignedAt = now; // only future bets count for new co-bookie
+  } else {
+    // Moving back to admin — clear commission routing
+    delete player.commissionTo;
+    delete player.commissionAssignedAt;
+  }
+
   if (commission !== undefined) {
     const oldRate = player.commission;
     player.commission = commission;
@@ -203,7 +217,8 @@ export function reassignPlayer(
       userRole: player.role,
       fromRate: oldRate,
       toRate: commission,
-      changedAt: Date.now(),
+      commissionToId: newParent.role === "cobookie" ? newParentId : undefined,
+      changedAt: now,
       changedBy: changedById,
     });
   }
@@ -457,6 +472,7 @@ export function updateCommission(
 
 // Assign commission from a specific player's P&L to a co-bookie.
 // commissionToId = null removes the commission assignment.
+// Only bets placed AFTER this call count toward the new co-bookie's commission.
 export function assignPlayerCommission(
   playerId: string,
   rate: number,
@@ -467,6 +483,8 @@ export function assignPlayerCommission(
   const s = read();
   const player = s.users.find((u) => u.id === playerId);
   if (!player || player.role !== "client") return { ok: false, error: "Player not found" };
+  const now = Date.now();
+  const targetChanged = commissionToId !== (player.commissionTo ?? null);
   const change: CommissionChange = {
     id: `cc_${Math.random().toString(36).slice(2, 10)}`,
     userId: playerId,
@@ -475,16 +493,53 @@ export function assignPlayerCommission(
     fromRate: player.commission,
     toRate: rate,
     commissionToId: commissionToId ?? undefined,
-    changedAt: Date.now(),
+    changedAt: now,
     changedBy: changedById,
   };
   player.commission = rate;
   if (commissionToId) {
     player.commissionTo = commissionToId;
+    if (targetChanged) player.commissionAssignedAt = now; // reset cutoff only when target co-bookie changes
   } else {
     delete player.commissionTo;
+    delete player.commissionAssignedAt;
   }
   s.commissionHistory.push(change);
+  write(s);
+  return { ok: true };
+}
+
+// Delete a co-bookie: return their chips to admin, move their players back to admin.
+export function deleteCobookie(
+  cobookieId: string,
+  adminId: string
+): { ok: true } | { ok: false; error: string } {
+  const s = read();
+  const cb = s.users.find((u) => u.id === cobookieId && u.role === "cobookie");
+  if (!cb) return { ok: false, error: "Co-bookie not found" };
+  const admin = s.users.find((u) => u.id === adminId);
+  if (!admin) return { ok: false, error: "Admin not found" };
+
+  // Return chips to admin
+  admin.chips += cb.chips;
+
+  // Move managed players back to admin and clear their commission routing
+  for (const u of s.users) {
+    if (u.parentId === cobookieId) {
+      u.parentId = adminId;
+      if (u.commissionTo === cobookieId) {
+        delete u.commissionTo;
+        delete u.commissionAssignedAt;
+      }
+    }
+    // Clear commissionTo for admin-direct players pointing at this co-bookie
+    if (u.commissionTo === cobookieId && u.parentId !== cobookieId) {
+      delete u.commissionTo;
+      delete u.commissionAssignedAt;
+    }
+  }
+
+  s.users = s.users.filter((u) => u.id !== cobookieId);
   write(s);
   return { ok: true };
 }

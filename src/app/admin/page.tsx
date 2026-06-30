@@ -13,7 +13,7 @@ import PlayerDetailSheet from "@/components/PlayerDetailSheet";
 import Loading from "@/components/Loading";
 import {
   useStore, useHydrated, statsForClient,
-  createUser, allocateChips, reclaimChips, updateCommission, reassignPlayer, assignPlayerCommission,
+  createUser, allocateChips, reclaimChips, updateCommission, reassignPlayer, assignPlayerCommission, deleteCobookie,
   type User, type Stats, type CommissionChange,
 } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -245,11 +245,12 @@ function PlayersTab({
   const [editCBId, setEditCBId] = useState("");
   const [editError, setEditError] = useState("");
 
-  // Reassign player state
+  // Reassign / transfer player state
   const [reassignTarget, setReassignTarget] = useState<User | null>(null);
   const [reassignCB, setReassignCB] = useState("");
   const [reassignComm, setReassignComm] = useState("");
   const [reassignError, setReassignError] = useState("");
+  const [reassignOptions, setReassignOptions] = useState<{ id: string; label: string; commission?: number }[]>([]);
 
   const totalPlayers = directClients.length + cbClients.length;
 
@@ -330,7 +331,8 @@ function PlayersTab({
                 cobookies={cobookies}
                 onOpenPlayer={onOpenPlayer}
                 onEditCommission={openEditCommission}
-                onReassign={cobookies.length > 0 ? (u) => { setReassignTarget(u); setReassignCB(cobookies[0].id); setReassignComm(String(u.commission ?? "")); setReassignError(""); } : undefined}
+                onReassign={cobookies.length > 0 ? (u) => { const opts = cobookies.map(cb => ({ id: cb.id, label: `${cb.name} (Co-Bookie)`, commission: cb.commission })); setReassignTarget(u); setReassignCB(opts[0]?.id ?? ""); setReassignComm(""); setReassignError(""); setReassignOptions(opts); } : undefined}
+                reassignOptions={cobookies.map(cb => ({ id: cb.id, label: `${cb.name} (Co-Bookie)`, commission: cb.commission }))}
               />
             </section>
           )}
@@ -347,7 +349,8 @@ function PlayersTab({
                 cobookies={cobookies}
                 onOpenPlayer={onOpenPlayer}
                 onEditCommission={openEditCommission}
-                onReassign={cobookies.length > 0 ? (u) => { setReassignTarget(u); setReassignCB(cobookies[0].id); setReassignComm(String(u.commission ?? "")); setReassignError(""); } : undefined}
+                onReassign={cobookies.length > 0 ? (u) => { const opts = cobookies.map(cb => ({ id: cb.id, label: `${cb.name} (Co-Bookie)`, commission: cb.commission })); setReassignTarget(u); setReassignCB(opts[0]?.id ?? ""); setReassignComm(""); setReassignError(""); setReassignOptions(opts); } : undefined}
+                reassignOptions={cobookies.map(cb => ({ id: cb.id, label: `${cb.name} (Co-Bookie)`, commission: cb.commission }))}
               />
             </section>
           )}
@@ -355,6 +358,10 @@ function PlayersTab({
           {/* Players under each co-bookie */}
           {cobookies.map((cb) => {
             const group = byCoBookieId.get(cb.id) ?? [];
+            const otherDestinations = [
+              { id: admin.id, label: "Admin (direct — me)", commission: undefined as number | undefined },
+              ...cobookies.filter(c => c.id !== cb.id).map(c => ({ id: c.id, label: `${c.name} (Co-Bookie)`, commission: c.commission })),
+            ];
             return (
               <section key={cb.id}>
                 <h3 className="text-xs font-bold text-purple-400/80 uppercase tracking-wider mb-2 flex items-center gap-1.5">
@@ -363,7 +370,21 @@ function PlayersTab({
                 {group.length === 0 ? (
                   <p className="text-xs text-slate-600 pl-3">No players yet</p>
                 ) : (
-                  <PlayerGrid clients={group} bets={bets} cobookies={cobookies} onOpenPlayer={onOpenPlayer} onEditCommission={openEditCommission} />
+                  <PlayerGrid
+                    clients={group}
+                    bets={bets}
+                    cobookies={cobookies}
+                    onOpenPlayer={onOpenPlayer}
+                    onEditCommission={openEditCommission}
+                    onReassign={(u) => {
+                      setReassignTarget(u);
+                      setReassignCB(otherDestinations[0]?.id ?? "");
+                      setReassignComm("");
+                      setReassignError("");
+                      setReassignOptions(otherDestinations);
+                    }}
+                    reassignOptions={otherDestinations}
+                  />
                 )}
               </section>
             );
@@ -531,63 +552,67 @@ function PlayersTab({
         </div>
       )}
 
-      {/* Reassign player to co-bookie modal */}
-      {reassignTarget && cobookies.length > 0 && (
+      {/* Transfer / reassign player modal */}
+      {reassignTarget && reassignOptions.length > 0 && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setReassignTarget(null)} />
           <div className="relative bg-[#0d1321] border border-white/10 rounded-2xl p-5 w-full max-w-xs shadow-2xl">
             <div className="flex items-center justify-between mb-1">
-              <h4 className="font-bold text-slate-200">Move Player</h4>
+              <h4 className="font-bold text-slate-200">Transfer Player</h4>
               <button onClick={() => setReassignTarget(null)} className="text-slate-500 hover:text-slate-200"><X size={16} /></button>
             </div>
-            <p className="text-xs text-slate-500 mb-4">
-              <span className="text-slate-300 font-semibold">{reassignTarget.name}</span> will be moved from your direct list to the selected co-bookie.
+            <p className="text-xs text-slate-500 mb-1">
+              Moving <span className="text-slate-300 font-semibold">{reassignTarget.name}</span> to a new manager.
             </p>
+            <p className="text-[10px] text-yellow-400/70 mb-4">Only future bets will count toward the new co-bookie&apos;s commission.</p>
 
             <div className="space-y-3">
               <div>
-                <label className="block text-xs text-slate-400 mb-1.5 font-medium">Assign to co-bookie</label>
+                <label className="block text-xs text-slate-400 mb-1.5 font-medium">Transfer to</label>
                 <select
                   value={reassignCB}
                   onChange={(e) => setReassignCB(e.target.value)}
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-3 text-base text-slate-200 focus:outline-none focus:border-yellow-400/50 transition-colors"
                 >
-                  {cobookies.map((cb) => (
-                    <option key={cb.id} value={cb.id}>{cb.name} ({cb.commission ?? 0}% default)</option>
+                  {reassignOptions.map((opt) => (
+                    <option key={opt.id} value={opt.id}>{opt.label}{opt.commission !== undefined ? ` — ${opt.commission}% default` : ""}</option>
                   ))}
                 </select>
               </div>
 
-              <div>
-                <label className="block text-xs text-slate-400 mb-1.5 font-medium">
-                  Commission % <span className="text-slate-600">(leave blank to use co-bookie&apos;s default)</span>
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    min="0"
-                    max="100"
-                    value={reassignComm}
-                    onChange={(e) => setReassignComm(e.target.value)}
-                    placeholder={`default: ${cobookies.find(cb => cb.id === reassignCB)?.commission ?? 0}%`}
-                    className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-3 text-base text-slate-200 placeholder-slate-600 focus:outline-none focus:border-yellow-400/50 transition-colors"
-                  />
-                  <span className="text-slate-400 font-bold text-lg">%</span>
+              {/* Commission field only when destination is a co-bookie */}
+              {reassignCB !== admin.id && (
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1.5 font-medium">
+                    Commission % <span className="text-slate-600">(leave blank to use default)</span>
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      min="0"
+                      max="100"
+                      value={reassignComm}
+                      onChange={(e) => setReassignComm(e.target.value)}
+                      placeholder={`default: ${reassignOptions.find(o => o.id === reassignCB)?.commission ?? 0}%`}
+                      className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-3 text-base text-slate-200 placeholder-slate-600 focus:outline-none focus:border-yellow-400/50 transition-colors"
+                    />
+                    <span className="text-slate-400 font-bold text-lg">%</span>
+                  </div>
+                  <div className="flex gap-1.5 mt-2">
+                    {[5, 10, 15, 20, 25].map((v) => (
+                      <button key={v} onClick={() => setReassignComm(String(v))} className="flex-1 text-xs py-1.5 rounded-lg bg-white/5 hover:bg-purple-400/10 hover:text-purple-400 text-slate-400 transition-colors">{v}%</button>
+                    ))}
+                  </div>
                 </div>
-                <div className="flex gap-1.5 mt-2">
-                  {[5, 10, 15, 20, 25].map((v) => (
-                    <button key={v} onClick={() => setReassignComm(String(v))} className="flex-1 text-xs py-1.5 rounded-lg bg-white/5 hover:bg-purple-400/10 hover:text-purple-400 text-slate-400 transition-colors">{v}%</button>
-                  ))}
-                </div>
-              </div>
+              )}
 
               {reassignError && <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{reassignError}</p>}
 
               <button
                 onClick={() => {
                   setReassignError("");
-                  const commVal = reassignComm.trim() ? parseInt(reassignComm) : undefined;
+                  const commVal = reassignCB !== admin.id && reassignComm.trim() ? parseInt(reassignComm) : undefined;
                   if (commVal !== undefined && (commVal < 0 || commVal > 100)) return setReassignError("Commission must be 0–100%");
                   const res = reassignPlayer(reassignTarget.id, reassignCB, commVal, admin.id);
                   if (!res.ok) return setReassignError(res.error);
@@ -595,7 +620,7 @@ function PlayersTab({
                 }}
                 className="w-full bg-yellow-400 hover:bg-yellow-300 active:scale-[0.98] text-black font-bold py-2.5 rounded-xl transition-all"
               >
-                Move to {cobookies.find(cb => cb.id === reassignCB)?.name ?? "Co-Bookie"}
+                Transfer to {reassignOptions.find(o => o.id === reassignCB)?.label?.split(" (")[0] ?? "destination"}
               </button>
             </div>
           </div>
@@ -605,7 +630,7 @@ function PlayersTab({
   );
 }
 
-function PlayerGrid({ clients, bets, cobookies, onOpenPlayer, onEditCommission, onReassign }: { clients: User[]; bets: ReturnType<typeof useStore>["bets"]; cobookies: User[]; onOpenPlayer: (p: User) => void; onEditCommission: (u: User) => void; onReassign?: (u: User) => void }) {
+function PlayerGrid({ clients, bets, cobookies, onOpenPlayer, onEditCommission, onReassign, reassignOptions }: { clients: User[]; bets: ReturnType<typeof useStore>["bets"]; cobookies: User[]; onOpenPlayer: (p: User) => void; onEditCommission: (u: User) => void; onReassign?: (u: User) => void; reassignOptions?: { id: string; label: string }[] }) {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
       {clients.map((c) => {
@@ -650,7 +675,7 @@ function PlayerGrid({ clients, bets, cobookies, onOpenPlayer, onEditCommission, 
                 onClick={(e) => { e.stopPropagation(); onReassign(c); }}
                 className="w-full text-[11px] font-semibold text-slate-400 hover:text-yellow-400 bg-white/5 hover:bg-yellow-400/10 border border-white/5 hover:border-yellow-400/20 rounded-lg py-1.5 transition-colors flex items-center justify-center gap-1"
               >
-                <ChevronRight size={11} /> Move to Co-Bookie
+                <ChevronRight size={11} /> Transfer Player
               </button>
             )}
           </div>
@@ -692,6 +717,10 @@ function CoBookiesTab({
 
   // Expanded state per co-bookie
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  // Delete co-bookie state
+  const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
+  const [deleteError, setDeleteError] = useState("");
 
   function toggleExpand(id: string) {
     setExpanded((prev) => {
@@ -766,10 +795,12 @@ function CoBookiesTab({
             const houseProfit = totalStaked - totalPayout;
 
             // Commission calculation: managed clients + admin players assigned to this co-bookie
+            // Only bets placed on or after commissionAssignedAt count (future-only rule)
             const allCommissionClients = [...managedClients, ...commissionOnlyClients];
             const commissionOwed = allCommissionClients.reduce((sum, client) => {
               const rate = client.commission ?? (client.parentId === cb.id ? cb.commission ?? 0 : 0);
-              const clientResolved = bets.filter((b) => b.clientId === client.id && b.status !== "pending");
+              const since = client.commissionAssignedAt ?? 0;
+              const clientResolved = bets.filter((b) => b.clientId === client.id && b.status !== "pending" && b.placedAt >= since);
               const clientWon = clientResolved.filter((b) => b.status === "won");
               const clientStaked = clientResolved.reduce((s, b) => s + b.stake, 0);
               const clientPayout = clientWon.reduce((s, b) => s + Math.round(b.stake * b.odds), 0);
@@ -797,6 +828,13 @@ function CoBookiesTab({
                       <p className="text-sm font-bold text-yellow-400 tabular-nums">{cb.chips.toLocaleString()}</p>
                       <p className="text-[10px] text-slate-500">chips</p>
                     </div>
+                    <button
+                      onClick={() => { setDeleteTarget(cb); setDeleteError(""); }}
+                      className="p-1.5 rounded-lg text-slate-600 hover:text-red-400 hover:bg-red-500/10 transition-colors shrink-0"
+                      title="Delete co-bookie"
+                    >
+                      <X size={14} />
+                    </button>
                   </div>
 
                   {/* Commission badge and player count */}
@@ -889,7 +927,8 @@ function CoBookiesTab({
                     <p className="text-[10px] font-bold text-slate-600 uppercase tracking-wider px-4 pt-2.5 pb-1.5">Per-player commission breakdown</p>
                     {allCommissionClients.map((client) => {
                       const rate = client.commission ?? (client.parentId === cb.id ? cb.commission ?? 0 : 0);
-                      const clientResolved = bets.filter((b) => b.clientId === client.id && b.status !== "pending");
+                      const since = client.commissionAssignedAt ?? 0;
+                      const clientResolved = bets.filter((b) => b.clientId === client.id && b.status !== "pending" && b.placedAt >= since);
                       const clientWon = clientResolved.filter((b) => b.status === "won");
                       const cStaked = clientResolved.reduce((s, b) => s + b.stake, 0);
                       const cPayout = clientWon.reduce((s, b) => s + Math.round(b.stake * b.odds), 0);
@@ -1048,6 +1087,45 @@ function CoBookiesTab({
             >
               Save Commission
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Delete co-bookie confirmation modal */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setDeleteTarget(null)} />
+          <div className="relative bg-[#0d1321] border border-red-500/20 rounded-2xl p-5 w-full max-w-xs shadow-2xl">
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="font-bold text-red-400">Delete Co-Bookie</h4>
+              <button onClick={() => setDeleteTarget(null)} className="text-slate-500 hover:text-slate-200"><X size={16} /></button>
+            </div>
+            <p className="text-sm text-slate-300 mb-1">
+              Delete <span className="font-bold text-white">{deleteTarget.name}</span>?
+            </p>
+            <p className="text-xs text-slate-500 mb-1">
+              · Their <span className="text-yellow-400 font-semibold">{deleteTarget.chips.toLocaleString()} chips</span> will be returned to you.
+            </p>
+            <p className="text-xs text-slate-500 mb-4">
+              · All their players will be moved back to your direct list.
+            </p>
+            {deleteError && <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2 mb-3">{deleteError}</p>}
+            <div className="flex gap-2">
+              <button onClick={() => setDeleteTarget(null)} className="flex-1 py-2.5 rounded-xl bg-white/5 text-slate-400 font-semibold text-sm hover:bg-white/10 transition-colors">
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setDeleteError("");
+                  const res = deleteCobookie(deleteTarget.id, admin.id);
+                  if (!res.ok) return setDeleteError(res.error);
+                  setDeleteTarget(null);
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-red-500 hover:bg-red-400 active:scale-[0.98] text-white font-bold text-sm transition-all"
+              >
+                Delete
+              </button>
+            </div>
           </div>
         </div>
       )}

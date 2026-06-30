@@ -54,7 +54,8 @@ export default function CoBookieDashboard() {
   const myCommissionRate = me.commission ?? 0;
   const myEarnings = allCommissionClients.reduce((sum, client) => {
     const rate = client.commission ?? (client.parentId === me.id ? myCommissionRate : 0);
-    const clientResolved = store.bets.filter((b) => b.clientId === client.id && b.status !== "pending");
+    const since = client.commissionAssignedAt ?? 0;
+    const clientResolved = store.bets.filter((b) => b.clientId === client.id && b.status !== "pending" && b.placedAt >= since);
     const clientWon = clientResolved.filter((b) => b.status === "won");
     const clientStaked = clientResolved.reduce((s, b) => s + b.stake, 0);
     const clientPayout = clientWon.reduce((s, b) => s + Math.round(b.stake * b.odds), 0);
@@ -324,8 +325,9 @@ function PlayersTab({
       ) : (
         <div className="space-y-2">
           {managedClients.map((c) => {
+            const since = c.commissionAssignedAt ?? 0;
             const clientBets = bets.filter((b) => b.clientId === c.id);
-            const cResolved = clientBets.filter((b) => b.status !== "pending");
+            const cResolved = clientBets.filter((b) => b.status !== "pending" && b.placedAt >= since);
             const cWon = cResolved.filter((b) => b.status === "won");
             const cStaked = cResolved.reduce((s, b) => s + b.stake, 0);
             const cPayout = cWon.reduce((s, b) => s + Math.round(b.stake * b.odds), 0);
@@ -375,8 +377,9 @@ function PlayersTab({
             <section>
               <p className="text-[10px] font-bold text-yellow-400/60 uppercase tracking-wider mb-2 mt-3">Shared by admin — commission only</p>
               {commissionOnlyClients.map((c) => {
+                const csince = c.commissionAssignedAt ?? 0;
                 const clientBets = bets.filter((b) => b.clientId === c.id);
-                const cResolved = clientBets.filter((b) => b.status !== "pending");
+                const cResolved = clientBets.filter((b) => b.status !== "pending" && b.placedAt >= csince);
                 const cWon = cResolved.filter((b) => b.status === "won");
                 const cStaked = cResolved.reduce((s, b) => s + b.stake, 0);
                 const cPayout = cWon.reduce((s, b) => s + Math.round(b.stake * b.odds), 0);

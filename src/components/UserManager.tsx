@@ -89,7 +89,7 @@ export default function UserManager({
   }
 
   function handleDelete(id: string, label: string) {
-    if (confirm(`Delete ${label}? Their chips will be returned to you.`)) {
+    if (confirm(`Delete ${label}? Their balance will be returned to you.`)) {
       deleteUser(id);
     }
   }
@@ -142,9 +142,9 @@ export default function UserManager({
                 </div>
                 <div className="text-right shrink-0">
                   <p className="text-base font-bold text-yellow-400 tabular-nums">
-                    {c.chips.toLocaleString()}
+                    ₹{c.chips.toLocaleString()}
                   </p>
-                  <p className="text-[10px] text-slate-500 uppercase tracking-wider">chips</p>
+                  <p className="text-[10px] text-slate-500 uppercase tracking-wider">balance</p>
                 </div>
               </div>
 
@@ -168,7 +168,7 @@ export default function UserManager({
                   }}
                   className="flex-1 flex items-center justify-center gap-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 text-xs font-semibold py-2 rounded-lg transition-colors"
                 >
-                  <ArrowUpRight size={13} /> Give
+                  <ArrowUpRight size={13} /> Add Balance
                 </button>
                 <button
                   onClick={() => {
@@ -178,7 +178,7 @@ export default function UserManager({
                   }}
                   className="flex-1 flex items-center justify-center gap-1 bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border border-orange-500/20 text-xs font-semibold py-2 rounded-lg transition-colors"
                 >
-                  <ArrowDownLeft size={13} /> Take
+                  <ArrowDownLeft size={13} /> Deduct
                 </button>
                 <button
                   onClick={() => handleDelete(c.id, c.name)}
@@ -226,9 +226,7 @@ export default function UserManager({
       {/* Allocate modal */}
       {allocOpen && (
         <Modal
-          title={`${allocMode === "give" ? "Give" : "Take"} chips ${
-            allocMode === "give" ? "to" : "from"
-          } ${children.find((c) => c.id === allocOpen)?.name ?? ""}`}
+          title={`${allocMode === "give" ? "Add Balance" : "Deduct"} — ${children.find((c) => c.id === allocOpen)?.name ?? ""}`}
           onClose={() => setAllocOpen(null)}
         >
           <div className="space-y-3">
@@ -236,13 +234,13 @@ export default function UserManager({
               <div className="flex justify-between text-slate-400">
                 <span>Your balance</span>
                 <span className="font-bold text-yellow-400 tabular-nums">
-                  {currentUser.chips.toLocaleString()}
+                  ₹{currentUser.chips.toLocaleString()}
                 </span>
               </div>
               <div className="flex justify-between text-slate-400 mt-1">
                 <span>Their balance</span>
                 <span className="font-bold text-slate-200 tabular-nums">
-                  {children.find((c) => c.id === allocOpen)?.chips.toLocaleString()}
+                  ₹{children.find((c) => c.id === allocOpen)?.chips.toLocaleString()}
                 </span>
               </div>
             </div>
@@ -278,7 +276,7 @@ export default function UserManager({
                   : "bg-orange-500 hover:bg-orange-400 text-white"
               }`}
             >
-              {allocMode === "give" ? "Give" : "Take"} {allocAmount || "0"} chips
+              {allocMode === "give" ? "Add" : "Deduct"} ₹{allocAmount || "0"}
             </button>
           </div>
         </Modal>

@@ -419,7 +419,7 @@ function PlayersTab({
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setCreateOpen(false)} />
           <div className="relative w-full sm:max-w-sm bg-[#111827] border border-white/10 rounded-t-3xl sm:rounded-2xl p-5 shadow-2xl">
             <h3 className="font-bold text-slate-200 mb-1">Add Player</h3>
-            <p className="text-xs text-slate-500 mb-4">Player will be added under your account. Chips come from your balance.</p>
+            <p className="text-xs text-slate-500 mb-4">Player will be added under your account. Balance comes from your account.</p>
             <div className="space-y-3">
               <CBInput label="Display name" value={name} onChange={setName} placeholder="Rahul Kumar" />
               <CBInput label="Username" value={username} onChange={setUsername} placeholder="rahulkumar" />

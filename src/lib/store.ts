@@ -717,6 +717,16 @@ export function getPendingBetMatchIds(): Set<string> {
   return ids;
 }
 
+export function addOwnerChips(ownerId: string, amount: number): { ok: true } | { ok: false; error: string } {
+  if (!Number.isFinite(amount) || amount <= 0) return { ok: false, error: "Amount must be positive" };
+  const s = read();
+  const owner = s.users.find((u) => u.id === ownerId && u.role === "owner");
+  if (!owner) return { ok: false, error: "Owner not found" };
+  owner.chips += Math.round(amount);
+  write(s);
+  return { ok: true };
+}
+
 export function resetAll() {
   if (typeof window === "undefined") return;
   localStorage.removeItem(KEY);

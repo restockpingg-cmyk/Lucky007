@@ -8,7 +8,7 @@ import StatsPanel from "@/components/StatsPanel";
 import MatchDetailSheet, { type BetSelection } from "@/components/MatchDetailSheet";
 import BottomNav, { type ClientView } from "@/components/BottomNav";
 import BackLayOdds from "@/components/BackLayOdds";
-import { useStore, useHydrated, placeBet, statsForClient, autoSettleWeeklyBets, getNextMondayIST, isMondayIST } from "@/lib/store";
+import { useStore, useHydrated, placeBet, settleBet, statsForClient, autoSettleWeeklyBets, getNextMondayIST, isMondayIST } from "@/lib/store";
 import type { Bet } from "@/lib/store";
 import Loading from "@/components/Loading";
 import { sportLabels, primaryOdds, type Sport, type Match } from "@/lib/data";
@@ -74,6 +74,27 @@ export default function ClientDashboard() {
     return () => clearInterval(i);
   }, []);
 
+  // Fluctuate odds on live matches every tick — sine wave per option so they breathe naturally
+  // MUST be before early returns to satisfy React Rules of Hooks
+  const allMatches = useMemo(() => {
+    return liveData.matches.map((m) => {
+      if (m.status !== "live") return m;
+      return {
+        ...m,
+        markets: m.markets.map((mk) => ({
+          ...mk,
+          options: mk.options.map((op) => {
+            const seed = op.id.split("").reduce((h, c) => ((h << 5) + h + c.charCodeAt(0)) | 0, m.id.length);
+            const phase = (Math.abs(seed) % 628) / 100;
+            const amp = 0.04 + (Math.abs(seed) % 12) / 100;
+            const delta = Math.sin(tick * 0.9 + phase) * amp;
+            return { ...op, odds: Math.max(1.01, Math.round((op.odds + delta) * 100) / 100) };
+          }),
+        })),
+      };
+    });
+  }, [liveData.matches, tick]);
+
   useEffect(() => {
     if (!hydrated) return;
     if (!me) router.replace("/");
@@ -87,25 +108,6 @@ export default function ClientDashboard() {
   const pendingCount = myBets.filter((b) => b.status === "pending").length;
   const stats = statsForClient(me.id, store.bets);
 
-  // Fluctuate odds on live matches every tick — sine wave per option so they breathe naturally
-  const allMatches = useMemo(() => {
-    return liveData.matches.map((m) => {
-      if (m.status !== "live") return m;
-      return {
-        ...m,
-        markets: m.markets.map((mk) => ({
-          ...mk,
-          options: mk.options.map((op) => {
-            const seed = op.id.split("").reduce((h, c) => ((h << 5) + h + c.charCodeAt(0)) | 0, m.id.length);
-            const phase = (Math.abs(seed) % 628) / 100; // 0..2π
-            const amp = 0.04 + (Math.abs(seed) % 12) / 100; // 0.04..0.16
-            const delta = Math.sin(tick * 0.9 + phase) * amp;
-            return { ...op, odds: Math.max(1.01, Math.round((op.odds + delta) * 100) / 100) };
-          }),
-        })),
-      };
-    });
-  }, [liveData.matches, tick]);
   const filtered = tab === "all" ? allMatches : allMatches.filter((m) => m.sport === tab);
   const live = filtered.filter((m) => m.status === "live");
   const upcoming = filtered.filter((m) => m.status === "upcoming");
@@ -120,6 +122,15 @@ export default function ClientDashboard() {
       const others = prev.filter((x) => !x.id.startsWith(baseId));
       return [...others, p];
     });
+  }
+
+  function handleCashOut(betId: string) {
+    const bet = myBets.find((b) => b.id === betId);
+    if (!bet) return;
+    const result = settleBet(betId);
+    if (result.ok) {
+      setReveal({ won: result.won, payout: result.payout, stake: bet.stake });
+    }
   }
 
   function handlePlace() {
@@ -175,7 +186,7 @@ export default function ClientDashboard() {
         )}
 
         {view === "bets" && (
-          <BetsView myBets={myBets} countdown={countdown} />
+          <BetsView myBets={myBets} countdown={countdown} onCashOut={handleCashOut} />
         )}
 
         {view === "account" && <AccountView stats={stats} chips={me.chips} username={me.username} name={me.name} />}
@@ -429,7 +440,7 @@ function InPlayView({
   );
 }
 
-function BetsView({ myBets, countdown }: { myBets: Bet[]; countdown: string }) {
+function BetsView({ myBets, countdown, onCashOut }: { myBets: Bet[]; countdown: string; onCashOut: (betId: string) => void }) {
   const active = myBets.filter((b) => b.status === "pending");
   const history = myBets.filter((b) => b.status !== "pending");
   const isMonday = isMondayIST();
@@ -474,7 +485,7 @@ function BetsView({ myBets, countdown }: { myBets: Bet[]; countdown: string }) {
             </span>
           </h2>
           <div className="space-y-2">
-            {active.map((b) => <BetCard key={b.id} bet={b} />)}
+            {active.map((b) => <BetCard key={b.id} bet={b} onCashOut={onCashOut} />)}
           </div>
         </section>
       )}
@@ -753,12 +764,11 @@ function MatchRow({
   );
 }
 
-function BetCard({ bet }: { bet: Bet }) {
+function BetCard({ bet, onCashOut }: { bet: Bet; onCashOut?: (betId: string) => void }) {
   const isPending = bet.status === "pending";
   const potentialPayout = Math.round(bet.stake * bet.odds);
   const ageMin = Math.floor((Date.now() - bet.placedAt) / 60_000);
 
-  // Next Monday settlement date label
   const nextMonday = new Date(getNextMondayIST());
   const settleDateLabel = nextMonday.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" });
 
@@ -801,6 +811,16 @@ function BetCard({ bet }: { bet: Bet }) {
           <span>Settles on <span className="text-yellow-400/80 font-semibold">{settleDateLabel}</span></span>
           <span className="ml-auto text-slate-600 tabular-nums">Win: <span className="text-emerald-400/70">{potentialPayout.toLocaleString()}</span></span>
         </div>
+      )}
+
+      {isPending && onCashOut && (
+        <button
+          onClick={() => onCashOut(bet.id)}
+          className="mt-2.5 w-full flex items-center justify-center gap-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/25 text-emerald-400 text-[11px] font-bold py-2 rounded-lg transition-colors active:scale-[0.98]"
+        >
+          <Sparkles size={11} />
+          Cash Out · Win up to ₹{potentialPayout.toLocaleString()}
+        </button>
       )}
     </div>
   );

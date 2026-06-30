@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Coins, Users, Receipt, BarChart3, History, Clock, TrendingUp, TrendingDown, Plus, ChevronRight, Activity } from "lucide-react";
+import { Coins, Users, Receipt, BarChart3, History, Clock, TrendingUp, TrendingDown, Plus, ChevronRight, Activity, Percent } from "lucide-react";
 import TopBar from "@/components/TopBar";
 import StatsPanel from "@/components/StatsPanel";
 import PlayerDetailSheet from "@/components/PlayerDetailSheet";
@@ -10,7 +10,7 @@ import Loading from "@/components/Loading";
 import { useStore, useHydrated, statsForAdmin, statsForClient, createUser, type User } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
-type Tab = "overview" | "players" | "live" | "history";
+type Tab = "overview" | "players" | "cobookies" | "live" | "history";
 
 export default function AdminDashboard() {
   const router = useRouter();
@@ -35,6 +35,7 @@ export default function AdminDashboard() {
   if (!hydrated) return <Loading />;
   if (!me || me.role !== "admin") return <Loading />;
 
+  const cobookies = store.users.filter((u) => u.role === "cobookie" && u.parentId === me.id);
   const clients = store.users.filter((u) => u.role === "client" && u.parentId === me.id);
   const clientIds = new Set(clients.map((c) => c.id));
   const allBets = store.bets.filter((b) => clientIds.has(b.clientId)).sort((a, b) => b.placedAt - a.placedAt);
@@ -46,6 +47,7 @@ export default function AdminDashboard() {
   const tabs: { id: Tab; label: string; icon: React.ReactNode; badge?: number }[] = [
     { id: "overview", label: "Overview", icon: <BarChart3 size={14} /> },
     { id: "players", label: "Players", icon: <Users size={14} />, badge: clients.length },
+    { id: "cobookies", label: "Co-Bookies", icon: <Percent size={14} />, badge: cobookies.length },
     { id: "live", label: "Live", icon: <Activity size={14} />, badge: pendingBets.length },
     { id: "history", label: "History", icon: <History size={14} />, badge: resolvedBets.length },
   ];
@@ -94,6 +96,7 @@ export default function AdminDashboard() {
         {/* Tab content */}
         {tab === "overview" && <OverviewTab stats={stats} clients={clients} bets={store.bets} onOpenPlayer={setOpenPlayer} />}
         {tab === "players" && <PlayersTab clients={clients} bets={store.bets} owner={me} onOpenPlayer={setOpenPlayer} />}
+        {tab === "cobookies" && <CoBookiesTab cobookies={cobookies} bets={store.bets} allUsers={store.users} admin={me} />}
         {tab === "live" && <LiveTab clients={clients} bets={pendingBets} onOpenPlayer={setOpenPlayer} />}
         {tab === "history" && <HistoryTab clients={clients} bets={resolvedBets} />}
       </main>
@@ -365,6 +368,146 @@ function HistoryTab({
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function CoBookiesTab({
+  cobookies,
+  bets,
+  allUsers,
+  admin,
+}: {
+  cobookies: User[];
+  bets: ReturnType<typeof useStore>["bets"];
+  allUsers: User[];
+  admin: User;
+}) {
+  const [createOpen, setCreateOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [username, setUsername] = useState("");
+  const [pin, setPin] = useState("");
+  const [commission, setCommission] = useState("10");
+  const [createError, setCreateError] = useState("");
+
+  function handleCreate() {
+    setCreateError("");
+    if (!name.trim() || !username.trim() || !pin.trim()) return setCreateError("All fields required");
+    if (pin.length < 4) return setCreateError("PIN must be 4+ digits");
+    const commVal = parseInt(commission);
+    if (!commVal || commVal < 1 || commVal > 100) return setCreateError("Commission must be 1–100%");
+    const res = createUser(admin.id, { name: name.trim(), username: username.trim(), pin: pin.trim(), role: "cobookie", commission: commVal });
+    if (!res.ok) return setCreateError(res.error);
+    setName(""); setUsername(""); setPin(""); setCommission("10");
+    setCreateOpen(false);
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-slate-400">{cobookies.length} co-book{cobookies.length !== 1 ? "ies" : "ie"}</p>
+        <button onClick={() => setCreateOpen(true)} className="flex items-center gap-1 bg-yellow-400 hover:bg-yellow-300 text-black text-sm font-bold px-3 py-1.5 rounded-lg active:scale-95 transition-all">
+          <Plus size={14} /> Add Co-Bookie
+        </button>
+      </div>
+
+      {cobookies.length === 0 ? (
+        <div className="bg-[#111827] border border-white/5 rounded-2xl p-8 text-center">
+          <Percent size={28} className="text-slate-700 mx-auto mb-2" />
+          <p className="text-slate-500 text-sm">No co-bookies yet</p>
+          <p className="text-slate-600 text-xs mt-1">Co-bookies manage their own players and earn a commission</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {cobookies.map((cb) => {
+            const cbClients = allUsers.filter((u) => u.role === "client" && u.parentId === cb.id);
+            const cbClientIds = new Set(cbClients.map((c) => c.id));
+            const cbBets = bets.filter((b) => cbClientIds.has(b.clientId));
+            const resolved = cbBets.filter((b) => b.status !== "pending");
+            const won = resolved.filter((b) => b.status === "won");
+            const lost = resolved.filter((b) => b.status === "lost");
+            const totalStaked = resolved.reduce((s, b) => s + b.stake, 0);
+            const totalPayout = won.reduce((s, b) => s + Math.round(b.stake * b.odds), 0);
+            const houseProfit = totalStaked - totalPayout;
+            const cbCommission = Math.round(houseProfit * (cb.commission ?? 0) / 100);
+            return (
+              <div key={cb.id} className="bg-[#111827] border border-white/5 rounded-2xl p-4">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-400/20 to-purple-600/10 border border-purple-400/20 flex items-center justify-center text-purple-400 font-bold shrink-0">
+                    {cb.name.charAt(0).toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-slate-200 truncate">{cb.name}</p>
+                    <p className="text-xs text-slate-500 font-mono truncate">@{cb.username}</p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <span className="text-xs font-bold text-purple-400 bg-purple-500/10 border border-purple-500/20 px-2 py-0.5 rounded-full">
+                      {cb.commission ?? 0}% commission
+                    </span>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="bg-white/5 rounded-xl py-2">
+                    <p className="text-xs text-slate-500">Players</p>
+                    <p className="font-bold text-slate-200">{cbClients.length}</p>
+                  </div>
+                  <div className="bg-white/5 rounded-xl py-2">
+                    <p className="text-xs text-slate-500">House P&L</p>
+                    <p className={cn("font-bold tabular-nums text-sm", houseProfit >= 0 ? "text-emerald-400" : "text-red-400")}>
+                      {houseProfit >= 0 ? "+" : ""}{houseProfit.toLocaleString()}
+                    </p>
+                  </div>
+                  <div className="bg-white/5 rounded-xl py-2">
+                    <p className="text-xs text-slate-500">Their Cut</p>
+                    <p className={cn("font-bold tabular-nums text-sm", cbCommission >= 0 ? "text-yellow-400" : "text-red-400")}>
+                      {cbCommission >= 0 ? "+" : ""}{cbCommission.toLocaleString()}
+                    </p>
+                  </div>
+                </div>
+                {won.length + lost.length > 0 && (
+                  <p className="text-[10px] text-slate-600 mt-2 text-center">
+                    {won.length}W / {lost.length}L · {cbBets.filter(b => b.status === "pending").length} pending
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Create modal */}
+      {createOpen && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setCreateOpen(false)} />
+          <div className="relative w-full sm:max-w-sm bg-[#111827] border border-white/10 rounded-t-3xl sm:rounded-2xl p-5 shadow-2xl">
+            <h3 className="font-bold text-slate-200 mb-1">Add Co-Bookie</h3>
+            <p className="text-xs text-slate-500 mb-4">Co-bookies get their own login and manage their own players. You set their commission rate.</p>
+            <div className="space-y-3">
+              <Input label="Display name" value={name} onChange={setName} placeholder="Raju Bookie" />
+              <Input label="Username" value={username} onChange={setUsername} placeholder="rajubookie" />
+              <Input label="PIN" value={pin} onChange={setPin} placeholder="4+ digits" type="password" inputMode="numeric" />
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5 font-medium">Commission % (of house profit)</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min="1"
+                    max="100"
+                    value={commission}
+                    onChange={(e) => setCommission(e.target.value)}
+                    className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-3 text-base text-slate-200 focus:outline-none focus:border-yellow-400/50 transition-colors"
+                  />
+                  <span className="text-slate-400 font-bold text-lg">%</span>
+                </div>
+                <p className="text-[10px] text-slate-600 mt-1">They earn this % of the net profit from their players&apos; bets</p>
+              </div>
+              {createError && <p className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{createError}</p>}
+              <button onClick={handleCreate} className="w-full bg-yellow-400 hover:bg-yellow-300 active:scale-[0.98] text-black font-bold py-3 rounded-xl transition-all">Create Co-Bookie</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-export type Role = "owner" | "admin" | "client";
+export type Role = "owner" | "admin" | "cobookie" | "client";
 
 export interface User {
   id: string;
@@ -13,6 +13,7 @@ export interface User {
   chips: number;
   parentId: string | null;
   createdAt: number;
+  commission?: number; // co-bookie only: % of house profit they earn (0-100)
 }
 
 export type BetSide = "back" | "lay";
@@ -120,7 +121,7 @@ export function logout() {
 
 export function createUser(
   parentId: string,
-  data: { name: string; username: string; pin: string; role: Role }
+  data: { name: string; username: string; pin: string; role: Role; commission?: number }
 ): { ok: true; user: User } | { ok: false; error: string } {
   const s = read();
   if (s.users.some((u) => u.username.toLowerCase() === data.username.toLowerCase())) {
@@ -135,6 +136,7 @@ export function createUser(
     chips: 0,
     parentId,
     createdAt: Date.now(),
+    ...(data.commission !== undefined ? { commission: data.commission } : {}),
   };
   s.users.push(user);
   write(s);

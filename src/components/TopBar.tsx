@@ -17,7 +17,7 @@ export default function TopBar({ user, subtitle }: TopBarProps) {
     router.replace("/");
   }
 
-  const roleLabel = { owner: "Owner", admin: "Admin", client: "Player" }[user.role];
+  const roleLabel = { owner: "Owner", admin: "Admin", cobookie: "Co-Bookie", client: "Player" }[user.role];
 
   return (
     <header className="sticky top-0 z-40 bg-[#0d1321]/95 backdrop-blur border-b border-white/5">

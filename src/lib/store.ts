@@ -13,9 +13,23 @@ export interface User {
   chips: number;
   parentId: string | null;
   createdAt: number;
+  lastLoginAt?: number;
   commission?: number;           // % of house profit that goes to the assigned co-bookie
   commissionTo?: string;         // which co-bookie receives the commission on this player's P&L
   commissionAssignedAt?: number; // timestamp — only bets placed AFTER this count toward commission
+}
+
+export type AccountEventType = "chips_in" | "chips_out" | "account_created" | "transferred";
+
+export interface AccountEvent {
+  id: string;
+  playerId: string;
+  type: AccountEventType;
+  amount?: number;
+  byId: string;
+  byName: string;
+  note?: string;
+  timestamp: number;
 }
 
 export type BetSide = "back" | "lay";
@@ -50,6 +64,7 @@ interface Store {
   users: User[];
   bets: Bet[];
   commissionHistory: CommissionChange[];
+  accountEvents: AccountEvent[];
   currentUserId: string | null;
 }
 
@@ -66,7 +81,7 @@ function seed(): Store {
     parentId: null,
     createdAt: Date.now(),
   };
-  return { users: [owner], bets: [], commissionHistory: [], currentUserId: null };
+  return { users: [owner], bets: [], commissionHistory: [], accountEvents: [], currentUserId: null };
 }
 
 function read(): Store {
@@ -80,6 +95,7 @@ function read(): Store {
     }
     const parsed = JSON.parse(raw) as Store;
     if (!parsed.commissionHistory) parsed.commissionHistory = [];
+    if (!parsed.accountEvents) parsed.accountEvents = [];
     return parsed;
   } catch {
     return seed();
@@ -126,6 +142,7 @@ export function login(username: string, pin: string): User | null {
   const user = s.users.find((u) => u.username.toLowerCase() === username.toLowerCase() && u.pin === pin);
   if (!user) return null;
   s.currentUserId = user.id;
+  user.lastLoginAt = Date.now();
   write(s);
   return user;
 }
@@ -157,6 +174,18 @@ export function createUser(
     ...(data.commissionTo !== undefined ? { commissionTo: data.commissionTo } : {}),
   };
   s.users.push(user);
+  // Log account creation event for clients
+  if (data.role === "client") {
+    const creator = s.users.find((u) => u.id === parentId);
+    s.accountEvents.push({
+      id: `ae_${Math.random().toString(36).slice(2, 10)}`,
+      playerId: user.id,
+      type: "account_created",
+      byId: parentId,
+      byName: creator?.name ?? "Admin",
+      timestamp: user.createdAt,
+    });
+  }
   write(s);
   return { ok: true, user };
 }
@@ -194,8 +223,20 @@ export function reassignPlayer(
   const newParent = s.users.find((u) => u.id === newParentId);
   if (!newParent) return { ok: false, error: "Target not found" };
 
+  const oldParent = s.users.find((u) => u.id === player.parentId);
   player.parentId = newParentId;
   const now = Date.now();
+
+  // Log transfer event
+  s.accountEvents.push({
+    id: `ae_${Math.random().toString(36).slice(2, 10)}`,
+    playerId: playerId,
+    type: "transferred",
+    byId: changedById,
+    byName: s.users.find((u) => u.id === changedById)?.name ?? "Admin",
+    note: `${oldParent?.name ?? "Admin"} → ${newParent.name}`,
+    timestamp: now,
+  });
 
   // If new parent is a co-bookie, point commissionTo at them and reset the cutoff
   if (newParent.role === "cobookie") {
@@ -239,6 +280,13 @@ export function allocateChips(
   if (from.chips < amount) return { ok: false, error: "Not enough chips" };
   from.chips -= amount;
   to.chips += amount;
+  const now = Date.now();
+  if (to.role === "client") {
+    s.accountEvents.push({ id: `ae_${Math.random().toString(36).slice(2, 10)}`, playerId: to.id, type: "chips_in", amount, byId: from.id, byName: from.name, timestamp: now });
+  }
+  if (from.role === "client") {
+    s.accountEvents.push({ id: `ae_${Math.random().toString(36).slice(2, 10)}`, playerId: from.id, type: "chips_out", amount, byId: to.id, byName: to.name, timestamp: now });
+  }
   write(s);
   return { ok: true };
 }
@@ -256,6 +304,13 @@ export function reclaimChips(
   if (from.chips < amount) return { ok: false, error: "Not enough chips" };
   from.chips -= amount;
   to.chips += amount;
+  const now = Date.now();
+  if (to.role === "client") {
+    s.accountEvents.push({ id: `ae_${Math.random().toString(36).slice(2, 10)}`, playerId: to.id, type: "chips_in", amount, byId: from.id, byName: from.name, timestamp: now });
+  }
+  if (from.role === "client") {
+    s.accountEvents.push({ id: `ae_${Math.random().toString(36).slice(2, 10)}`, playerId: from.id, type: "chips_out", amount, byId: to.id, byName: to.name, timestamp: now });
+  }
   write(s);
   return { ok: true };
 }
@@ -542,6 +597,11 @@ export function deleteCobookie(
   s.users = s.users.filter((u) => u.id !== cobookieId);
   write(s);
   return { ok: true };
+}
+
+export function getPlayerEvents(playerId: string): AccountEvent[] {
+  const s = read();
+  return (s.accountEvents ?? []).filter((e) => e.playerId === playerId).sort((a, b) => b.timestamp - a.timestamp);
 }
 
 export function resetAll() {

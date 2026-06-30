@@ -2,21 +2,6 @@ import { NextResponse } from "next/server";
 
 const API_BASE = "https://api.the-odds-api.com/v4/sports";
 
-type Sport =
-  | "football"
-  | "cricket"
-  | "basketball"
-  | "tennis"
-  | "baseball"
-  | "hockey"
-  | "americanfootball"
-  | "rugby"
-  | "aussierules"
-  | "mma"
-  | "boxing"
-  | "golf"
-  | "other";
-
 interface OddsApiSport {
   key: string;
   group: string;
@@ -41,7 +26,7 @@ interface OddsApiEvent {
 
 interface LiveMatch {
   id: string;
-  sport: Sport;
+  sport: "cricket" | "football" | "tennis";
   league: string;
   homeTeam: string;
   awayTeam: string;
@@ -54,20 +39,11 @@ interface LiveMatch {
   bookmaker?: string;
 }
 
-function sportFromKey(key: string): Sport {
+function sportFromKey(key: string): "cricket" | "football" | "tennis" | null {
   if (key.startsWith("soccer_")) return "football";
   if (key.startsWith("cricket_")) return "cricket";
-  if (key.startsWith("basketball_")) return "basketball";
   if (key.startsWith("tennis_")) return "tennis";
-  if (key.startsWith("baseball_")) return "baseball";
-  if (key.startsWith("icehockey_") || key.startsWith("hockey_")) return "hockey";
-  if (key.startsWith("americanfootball_")) return "americanfootball";
-  if (key.startsWith("rugbyleague_") || key.startsWith("rugbyunion_")) return "rugby";
-  if (key.startsWith("aussierules_")) return "aussierules";
-  if (key.startsWith("mma_")) return "mma";
-  if (key.startsWith("boxing_")) return "boxing";
-  if (key.startsWith("golf_")) return "golf";
-  return "other";
+  return null;
 }
 
 function formatTimeUntil(date: Date): string {
@@ -83,9 +59,13 @@ function formatTimeUntil(date: Date): string {
 }
 
 function mapEvent(ev: OddsApiEvent): LiveMatch | null {
+  const sport = sportFromKey(ev.sport_key);
+  if (!sport) return null;
+
   const bk = ev.bookmakers[0];
   const market = bk?.markets.find((m) => m.key === "h2h");
   if (!market) return null;
+
   const homeOutcome = market.outcomes.find((o) => o.name === ev.home_team);
   const awayOutcome = market.outcomes.find((o) => o.name === ev.away_team);
   const drawOutcome = market.outcomes.find((o) => o.name === "Draw");
@@ -95,13 +75,9 @@ function mapEvent(ev: OddsApiEvent): LiveMatch | null {
   const now = new Date();
   const isLive = commenceTime <= now;
   const elapsedMin = isLive ? Math.floor((now.getTime() - commenceTime.getTime()) / 60_000) : 0;
-  const sport = sportFromKey(ev.sport_key);
 
   const shouldShowMinute =
-    isLive &&
-    elapsedMin < 240 &&
-    sport !== "tennis" &&
-    !ev.sport_key.includes("test_match");
+    isLive && elapsedMin < 240 && sport !== "tennis" && !ev.sport_key.includes("test_match");
 
   return {
     id: `odds_${ev.id}`,
@@ -121,9 +97,8 @@ function mapEvent(ev: OddsApiEvent): LiveMatch | null {
 
 async function fetchSportsList(apiKey: string): Promise<OddsApiSport[]> {
   try {
-    // The /sports endpoint is free (doesn't count against quota).
     const res = await fetch(`${API_BASE}/?apiKey=${apiKey}&all=false`, {
-      next: { revalidate: 86400 }, // refresh sports list daily
+      next: { revalidate: 3600 }, // refresh sport list every hour
     });
     if (!res.ok) return [];
     return (await res.json()) as OddsApiSport[];
@@ -139,10 +114,10 @@ async function fetchSport(
 ): Promise<{ events: OddsApiEvent[]; remaining?: number; used?: number }> {
   try {
     const url = `${API_BASE}/${sport}/odds?apiKey=${apiKey}&regions=eu&markets=h2h&oddsFormat=decimal`;
-    // 48h background cache. With ~30 sports = ~15 credits/day = ~450/month.
+    // 1h cache — fresh enough for a betting app, conservative on quota
     const fetchOpts: RequestInit = force
       ? { cache: "no-store" }
-      : { next: { revalidate: 172800 } };
+      : { next: { revalidate: 3600 } };
     const res = await fetch(url, fetchOpts);
     if (!res.ok) return { events: [] };
     const events = (await res.json()) as OddsApiEvent[];
@@ -156,14 +131,6 @@ async function fetchSport(
   } catch {
     return { events: [] };
   }
-}
-
-function isRelevantSport(sport: OddsApiSport): boolean {
-  // Skip outright/future bets — they're "league winner" predictions, not match bets
-  if (sport.has_outrights) return false;
-  if (sport.key.endsWith("_winner")) return false;
-  if (sport.key.startsWith("politics_")) return false;
-  return true;
 }
 
 export async function GET(request: Request) {
@@ -180,14 +147,13 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const force = url.searchParams.get("force") === "1";
 
-  // Discover what's currently in season
+  // Only fetch cricket, football (soccer), and tennis leagues
   const allSports = await fetchSportsList(apiKey);
-  const activeSports = allSports.filter(isRelevantSport).map((s) => s.key);
+  const targetSports = allSports
+    .filter((s) => !s.has_outrights && sportFromKey(s.key) !== null)
+    .map((s) => s.key);
 
-  // Cap at 30 sports to keep quota under control
-  const sportsToFetch = activeSports.slice(0, 30);
-
-  const results = await Promise.allSettled(sportsToFetch.map((s) => fetchSport(s, apiKey, force)));
+  const results = await Promise.allSettled(targetSports.map((s) => fetchSport(s, apiKey, force)));
 
   let remaining: number | undefined;
   let used: number | undefined;
@@ -203,18 +169,19 @@ export async function GET(request: Request) {
     .map(mapEvent)
     .filter((m): m is LiveMatch => m !== null)
     .sort((a, b) => {
+      // Live first, then upcoming
       if (a.status === "live" && b.status !== "live") return -1;
       if (a.status !== "live" && b.status === "live") return 1;
       return 0;
     })
-    .slice(0, 200);
+    .slice(0, 300);
 
   return NextResponse.json({
     matches,
     source: matches.length > 0 ? "The Odds API" : null,
     quotaRemaining: remaining,
     quotaUsed: used,
-    sportsScanned: sportsToFetch.length,
+    sportsScanned: targetSports.length,
     fetchedAt: Date.now(),
     cached: !force,
   });

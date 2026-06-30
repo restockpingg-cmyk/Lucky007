@@ -102,10 +102,10 @@ export default function ClientDashboard() {
     return () => clearInterval(i);
   }, []);
 
-  // Tick every 5s to drive odds fluctuation
+  // Tick every 1.5s to drive odds fluctuation
   const [tick, setTick] = useState(0);
   useEffect(() => {
-    const i = setInterval(() => setTick((n) => n + 1), 5_000);
+    const i = setInterval(() => setTick((n) => n + 1), 1500);
     return () => clearInterval(i);
   }, []);
 

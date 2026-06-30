@@ -784,6 +784,12 @@ function CoBookiesTab({
     if (!res.ok) alert(res.error);
   }
 
+  function handleCollect(cb: User, amount: number) {
+    if (amount <= 0) return;
+    const res = reclaimChips(cb.id, admin.id, amount);
+    if (!res.ok) alert(res.error);
+  }
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
@@ -898,23 +904,34 @@ function CoBookiesTab({
 
                   {/* Settlement action */}
                   {commissionOwed !== 0 && (
-                    <div className={cn("rounded-xl px-3 py-2.5 mb-3 flex items-center gap-2", adminGives ? "bg-emerald-500/10 border border-emerald-500/20" : "bg-orange-500/10 border border-orange-500/20")}>
-                      <div className="flex-1">
-                        <p className={cn("text-xs font-bold", adminGives ? "text-emerald-400" : "text-orange-400")}>
-                          {adminGives
-                            ? `You owe ${cb.name}: ₹${commissionOwed.toLocaleString()}`
-                            : `${cb.name} owes you: ₹${Math.abs(commissionOwed).toLocaleString()}`}
-                        </p>
-                        <p className="text-[10px] text-slate-500 mt-0.5">Based on settled bets this period</p>
+                    <div className={cn("rounded-xl px-3 py-2.5 mb-3 border", adminGives ? "bg-emerald-500/10 border-emerald-500/20" : "bg-orange-500/10 border-orange-500/20")}>
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1">
+                          <p className={cn("text-xs font-bold", adminGives ? "text-emerald-400" : "text-orange-400")}>
+                            {adminGives
+                              ? `You owe ${cb.name}: ₹${commissionOwed.toLocaleString()}`
+                              : `${cb.name} owes you: ₹${Math.abs(commissionOwed).toLocaleString()}`}
+                          </p>
+                          <p className="text-[10px] text-slate-500 mt-0.5">
+                            {adminGives ? "Commission due — pay in cash or transfer" : "Loss share due — collect in cash or deduct"}
+                          </p>
+                        </div>
+                        {adminGives ? (
+                          <button
+                            onClick={() => handleSettle(cb, commissionOwed)}
+                            className="text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-white px-3 py-1.5 rounded-lg transition-colors shrink-0"
+                          >
+                            Settle
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleCollect(cb, Math.abs(commissionOwed))}
+                            className="text-xs font-bold bg-orange-500 hover:bg-orange-400 text-white px-3 py-1.5 rounded-lg transition-colors shrink-0"
+                          >
+                            Collect
+                          </button>
+                        )}
                       </div>
-                      {adminGives && (
-                        <button
-                          onClick={() => handleSettle(cb, commissionOwed)}
-                          className="text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-white px-3 py-1.5 rounded-lg transition-colors shrink-0"
-                        >
-                          Settle
-                        </button>
-                      )}
                     </div>
                   )}
 

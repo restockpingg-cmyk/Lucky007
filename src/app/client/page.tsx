@@ -2,13 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Receipt, X, Trash2, Sparkles, Clock, RefreshCw, ChevronRight, Activity } from "lucide-react";
+import { Check, Receipt, X, Trash2, Sparkles, Clock, RefreshCw, ChevronRight, Activity, CalendarClock } from "lucide-react";
 import TopBar from "@/components/TopBar";
 import StatsPanel from "@/components/StatsPanel";
 import MatchDetailSheet, { type BetSelection } from "@/components/MatchDetailSheet";
 import BottomNav, { type ClientView } from "@/components/BottomNav";
 import BackLayOdds from "@/components/BackLayOdds";
-import { useStore, useHydrated, placeBet, settleBet, statsForClient } from "@/lib/store";
+import { useStore, useHydrated, placeBet, statsForClient, autoSettleWeeklyBets, getNextMondayIST, isMondayIST } from "@/lib/store";
 import type { Bet } from "@/lib/store";
 import Loading from "@/components/Loading";
 import { sportLabels, primaryOdds, type Sport, type Match } from "@/lib/data";
@@ -31,6 +31,34 @@ export default function ClientDashboard() {
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
   const [reveal, setReveal] = useState<{ won: boolean; payout: number; stake: number } | null>(null);
+  const [settlementBanner, setSettlementBanner] = useState<{ settled: number; netChips: number } | null>(null);
+  const [countdown, setCountdown] = useState("");
+
+  // Monday auto-settlement
+  useEffect(() => {
+    if (!hydrated || !me) return;
+    const results = autoSettleWeeklyBets(me.id);
+    if (results.length > 0) {
+      const netChips = results.reduce((sum, r) => sum + (r.won ? r.payout - r.bet.stake : -r.bet.stake), 0);
+      setSettlementBanner({ settled: results.length, netChips });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrated]);
+
+  // Countdown to next Monday
+  useEffect(() => {
+    function updateCountdown() {
+      const diff = getNextMondayIST() - Date.now();
+      if (diff <= 0) { setCountdown("Settlement due!"); return; }
+      const d = Math.floor(diff / 86400000);
+      const h = Math.floor((diff % 86400000) / 3600000);
+      const m = Math.floor((diff % 3600000) / 60000);
+      setCountdown(d > 0 ? `${d}d ${h}h ${m}m` : `${h}h ${m}m`);
+    }
+    updateCountdown();
+    const i = setInterval(updateCountdown, 60_000);
+    return () => clearInterval(i);
+  }, []);
 
   const [, setNow] = useState(0);
   useEffect(() => {
@@ -118,13 +146,7 @@ export default function ClientDashboard() {
         )}
 
         {view === "bets" && (
-          <BetsView
-            myBets={myBets}
-            onSettle={(bet) => {
-              const res = settleBet(bet.id);
-              if (res.ok) setReveal({ won: res.won, payout: res.payout, stake: bet.stake });
-            }}
-          />
+          <BetsView myBets={myBets} countdown={countdown} />
         )}
 
         {view === "account" && <AccountView stats={stats} chips={me.chips} username={me.username} name={me.name} />}
@@ -145,6 +167,25 @@ export default function ClientDashboard() {
       {toast && (
         <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 bg-emerald-500 text-white text-sm font-semibold px-4 py-2 rounded-xl shadow-2xl flex items-center gap-2 animate-fade-in">
           <Check size={16} /> {toast}
+        </div>
+      )}
+
+      {/* Monday settlement banner */}
+      {settlementBanner && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 w-[90vw] max-w-sm bg-[#111827] border border-yellow-400/30 rounded-2xl shadow-2xl p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Sparkles size={16} className="text-yellow-400" />
+            <span className="font-black text-yellow-400 text-sm">Monday Settlement!</span>
+          </div>
+          <p className="text-xs text-slate-400 mb-3">
+            {settlementBanner.settled} bet{settlementBanner.settled > 1 ? "s" : ""} settled this week
+          </p>
+          <p className={cn("text-2xl font-black tabular-nums", settlementBanner.netChips >= 0 ? "text-emerald-400" : "text-red-400")}>
+            {settlementBanner.netChips >= 0 ? "+" : ""}{settlementBanner.netChips.toLocaleString()} chips
+          </p>
+          <button onClick={() => setSettlementBanner(null)} className="absolute top-3 right-3 text-slate-500 hover:text-slate-200">
+            <X size={16} />
+          </button>
         </div>
       )}
 
@@ -370,9 +411,10 @@ function InPlayView({
   );
 }
 
-function BetsView({ myBets, onSettle }: { myBets: Bet[]; onSettle: (b: Bet) => void }) {
+function BetsView({ myBets, countdown }: { myBets: Bet[]; countdown: string }) {
   const active = myBets.filter((b) => b.status === "pending");
   const history = myBets.filter((b) => b.status !== "pending");
+  const isMonday = isMondayIST();
 
   if (myBets.length === 0) {
     return (
@@ -386,6 +428,24 @@ function BetsView({ myBets, onSettle }: { myBets: Bet[]; onSettle: (b: Bet) => v
 
   return (
     <div className="space-y-4">
+      {/* Settlement countdown banner */}
+      <div className={cn(
+        "flex items-center gap-3 rounded-xl px-4 py-3 border",
+        isMonday
+          ? "bg-yellow-400/10 border-yellow-400/30"
+          : "bg-white/5 border-white/10"
+      )}>
+        <CalendarClock size={18} className={isMonday ? "text-yellow-400" : "text-slate-500"} />
+        <div>
+          <p className={cn("text-sm font-bold", isMonday ? "text-yellow-300" : "text-slate-300")}>
+            {isMonday ? "Settlement Day Today 🎉" : "Next Settlement: Monday"}
+          </p>
+          <p className="text-xs text-slate-500">
+            {isMonday ? "All this week's bets are being settled" : `Settles in ${countdown}`}
+          </p>
+        </div>
+      </div>
+
       {active.length > 0 && (
         <section>
           <h2 className="font-bold text-slate-200 mb-2.5 flex items-center gap-2">
@@ -396,7 +456,7 @@ function BetsView({ myBets, onSettle }: { myBets: Bet[]; onSettle: (b: Bet) => v
             </span>
           </h2>
           <div className="space-y-2">
-            {active.map((b) => <BetCard key={b.id} bet={b} onSettle={() => onSettle(b)} />)}
+            {active.map((b) => <BetCard key={b.id} bet={b} />)}
           </div>
         </section>
       )}
@@ -670,10 +730,15 @@ function MatchRow({
   );
 }
 
-function BetCard({ bet, onSettle }: { bet: Bet; onSettle?: () => void }) {
+function BetCard({ bet }: { bet: Bet }) {
   const isPending = bet.status === "pending";
   const potentialPayout = Math.round(bet.stake * bet.odds);
   const ageMin = Math.floor((Date.now() - bet.placedAt) / 60_000);
+
+  // Next Monday settlement date label
+  const nextMonday = new Date(getNextMondayIST());
+  const settleDateLabel = nextMonday.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" });
+
   return (
     <div className={cn("rounded-xl p-3 border", isPending ? "bg-blue-500/5 border-blue-500/20" : "bg-white/5 border-transparent")}>
       <div className="flex items-start justify-between gap-2 mb-1">
@@ -695,23 +760,24 @@ function BetCard({ bet, onSettle }: { bet: Bet; onSettle?: () => void }) {
           {bet.status}
         </span>
       </div>
+
       <div className="flex items-center justify-between text-xs text-slate-500">
         <span>Stake <span className="text-slate-300 font-semibold">{bet.stake.toLocaleString()}</span></span>
         {bet.status === "won" && <span className="text-emerald-400 font-bold">+{potentialPayout.toLocaleString()}</span>}
         {bet.status === "lost" && <span className="text-red-400 font-bold">-{bet.stake.toLocaleString()}</span>}
         {isPending && (
-          <span className="text-slate-400 flex items-center gap-1">
+          <span className="text-slate-500 flex items-center gap-1">
             <Clock size={11} /> {ageMin === 0 ? "just now" : `${ageMin}m ago`}
           </span>
         )}
       </div>
-      {isPending && onSettle && (
-        <button
-          onClick={onSettle}
-          className="w-full mt-2.5 flex items-center justify-center gap-1.5 bg-gradient-to-r from-yellow-400 to-yellow-500 hover:from-yellow-300 hover:to-yellow-400 text-black font-bold py-2 rounded-lg active:scale-[0.98] transition-all"
-        >
-          <Sparkles size={14} /> Cash out · {potentialPayout.toLocaleString()}
-        </button>
+
+      {isPending && (
+        <div className="mt-2 flex items-center gap-1.5 text-[10px] text-slate-500">
+          <CalendarClock size={11} className="text-yellow-400/60" />
+          <span>Settles on <span className="text-yellow-400/80 font-semibold">{settleDateLabel}</span></span>
+          <span className="ml-auto text-slate-600 tabular-nums">Win: <span className="text-emerald-400/70">{potentialPayout.toLocaleString()}</span></span>
+        </div>
       )}
     </div>
   );

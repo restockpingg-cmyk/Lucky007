@@ -385,3 +385,56 @@ export function resetAll() {
   localStorage.removeItem(KEY);
   window.dispatchEvent(new Event("lucky007_store_change"));
 }
+
+// ── Monday settlement ─────────────────────────────────────────────────────────
+
+// Returns the most recent Monday at 00:00 IST (UTC+5:30) as a UTC timestamp
+export function getLastMondayIST(): number {
+  const istOffset = 5.5 * 60 * 60 * 1000;
+  const istNow = new Date(Date.now() + istOffset);
+  const dayOfWeek = istNow.getUTCDay(); // 0=Sun, 1=Mon … 6=Sat
+  const daysSinceMon = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+  const lastMonIST = new Date(istNow);
+  lastMonIST.setUTCDate(lastMonIST.getUTCDate() - daysSinceMon);
+  lastMonIST.setUTCHours(0, 0, 0, 0);
+  return lastMonIST.getTime() - istOffset; // back to UTC
+}
+
+// Returns the next Monday 00:00 IST as a UTC timestamp
+export function getNextMondayIST(): number {
+  return getLastMondayIST() + 7 * 24 * 60 * 60 * 1000;
+}
+
+// Returns true if today is Monday (IST)
+export function isMondayIST(): boolean {
+  const istOffset = 5.5 * 60 * 60 * 1000;
+  const istNow = new Date(Date.now() + istOffset);
+  return istNow.getUTCDay() === 1;
+}
+
+// Settle all pending bets for a client that were placed before last Monday.
+// Returns the list of settled bets with their outcomes.
+export function autoSettleWeeklyBets(clientId: string): Array<{ bet: Bet; won: boolean; payout: number }> {
+  const s = read();
+  const cutoff = getLastMondayIST();
+  const toSettle = s.bets.filter(
+    (b) => b.clientId === clientId && b.status === "pending" && b.placedAt < cutoff
+  );
+  if (toSettle.length === 0) return [];
+
+  const results: Array<{ bet: Bet; won: boolean; payout: number }> = [];
+  for (const bet of toSettle) {
+    const impliedProb = 1 / bet.odds;
+    const outcomeHappens = Math.random() < impliedProb;
+    const won = bet.side === "lay" ? !outcomeHappens : outcomeHappens;
+    bet.status = won ? "won" : "lost";
+    const payout = won ? Math.round(bet.stake * bet.odds) : 0;
+    if (won) {
+      const client = s.users.find((u) => u.id === bet.clientId);
+      if (client) client.chips += payout;
+    }
+    results.push({ bet, won, payout });
+  }
+  write(s);
+  return results;
+}
